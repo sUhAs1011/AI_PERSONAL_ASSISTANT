@@ -1,0 +1,40 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand: #5D5FEF;
+  --color-brand-light: #EBEBFF;
+  --color-brand-dark: #4A4BD9;
+  
+  --color-busy: #F8D7DA;
+  --color-busy-text: #DC3545;
+  --color-free: #D1E7DD;
+  --color-free-text: #198754;
+  --color-ai: #E2E3FF;
+  --color-ai-text: #5D5FEF;
+
+  --radius-card: 24px;
+  --radius-inner: 16px;
+  
+  --font-sans: "Outfit", system-ui, sans-serif;
+  
+  --shadow-premium: 0 10px 30px -5px rgba(0, 0, 0, 0.05);
+}
+
+:root {
+  background-color: #F7F8FC;
+  font-family: "Outfit", sans-serif;
+}
+
+body {
+  @apply bg-[#F7F8FC] text-[#08060D] antialiased overflow-x-hidden;
+}
+
+@layer components {
+  .premium-card {
+    @apply bg-white rounded-[24px] shadow-[0_10px_30px_-5px_rgba(0,0,0,0.05)] border border-white/50;
+  }
+  
+  .glass-sidebar {
+    @apply bg-white/70 backdrop-blur-xl border-r border-slate-100;
+  }
+}
