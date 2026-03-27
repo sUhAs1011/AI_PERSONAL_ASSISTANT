@@ -118,7 +118,7 @@ npm run build
 
 ## Recent Conversational V1 Changes
 - Added conversation router:
-- `app/llm/router.py` with `ConversationMode` (`calendar_action`, `calendar_query`, `general_chat`) and heuristic+LLM routing.
+- `app/llm/router.py` with `ConversationMode` (`calendar_action`, `calendar_query`, `general_chat`) using LLM-first routing and heuristic fallback only on router failure.
 - Updated agent flow:
 - `app/graph/nodes/agent_node.py` now routes general chat turns to non-tool assistant responses and routes calendar intents to tool-calling.
 - Added state fields:

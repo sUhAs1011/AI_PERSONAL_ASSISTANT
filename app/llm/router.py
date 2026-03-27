@@ -79,14 +79,7 @@ def route_mode(
     conversation_history: list[dict] | None = None,
     timezone: str = "Asia/Kolkata",
 ) -> ModeRoute:
-    heuristic = _heuristic_mode(user_message)
-    if heuristic is not None:
-        logger.info("router.heuristic mode=%s message=%r", heuristic.value, user_message[:160])
-        return ModeRoute(mode=heuristic, confidence="high", reason="heuristic")
-
     history_preview = (conversation_history or [])[-6:]
-    llm = build_llm(bound_tools=[])
-    router_llm = llm.with_structured_output(ModeRoute)
     prompt = f"""
 Classify the latest user message into one mode:
 - calendar_action: user asks to create/update/cancel meetings or invites
@@ -98,6 +91,8 @@ Recent history: {history_preview}
 User message: {user_message}
 """.strip()
     try:
+        llm = build_llm(bound_tools=[])
+        router_llm = llm.with_structured_output(ModeRoute)
         result = router_llm.invoke(prompt)
         if isinstance(result, ModeRoute):
             logger.info(
@@ -117,6 +112,14 @@ User message: {user_message}
         return parsed
     except Exception:
         logger.exception("router.error_fallback message=%r", user_message[:160])
+        heuristic = _heuristic_mode(user_message)
+        if heuristic is not None:
+            logger.info("router.heuristic_fallback mode=%s message=%r", heuristic.value, user_message[:160])
+            return ModeRoute(
+                mode=heuristic,
+                confidence="low",
+                reason="heuristic_fallback_on_router_error",
+            )
         return ModeRoute(
             mode=ConversationMode.GENERAL_CHAT,
             confidence="low",

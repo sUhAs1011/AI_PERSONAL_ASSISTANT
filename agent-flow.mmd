@@ -1,0 +1,46 @@
+graph TD;
+    U["User message + conversation_history + timezone"] --> CHAT["/chat"];
+    CHAT --> S["Build AgentState<br/>messages + preferences + trace_id"];
+
+    S --> GSTART(("LangGraph START"));
+    GSTART --> A["agent_node<br/>route_mode: LLM-first, heuristic fallback<br/>general reply OR tool-call plan"];
+
+    A --> R{"route_after_agent"};
+    R -->|tool_calls present| TN["ToolNode<br/>(proxy tools)"];
+    R -->|needs_hitl| H["hitl_node<br/>save pending action"];
+    R -->|pending_clarification or no tool call| F["finalizer_node"];
+
+    TN --> TR["tool_result_node<br/>normalize tool outputs<br/>(execution_result)"];
+    TR --> R2{"route_after_tool_result"};
+    R2 -->|conflict / needs_hitl| H;
+    R2 -->|ok| F;
+
+    H --> END(("END"));
+    F --> END;
+    END --> RESP["ChatResponse<br/>summary + response_mode<br/>conversation_history (+event_id marker)"];
+
+    subgraph TOOLS["Tools Layer"]
+      T1["find_events"];
+      T2["check_availability"];
+      T3["book_event"];
+      T4["reschedule_event"];
+      T5["cancel_event"];
+      T6["schedule_mutual"];
+    end
+
+    TN --> T1;
+    TN --> T2;
+    TN --> T3;
+    TN --> T4;
+    TN --> T5;
+    TN --> T6;
+
+    subgraph MEMORY["Memory"]
+      M1["Conversation history<br/>(client-passed each turn)"];
+      M2["PreferencesRepo (SQLite)"];
+      M3["PendingActionRepo (SQLite HITL)"];
+    end
+
+    CHAT -.reads.-> M2;
+    CHAT -.uses.-> M1;
+    H -.writes.-> M3;
