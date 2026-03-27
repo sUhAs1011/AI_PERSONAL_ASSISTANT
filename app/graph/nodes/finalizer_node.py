@@ -14,41 +14,105 @@ logger = logging.getLogger(__name__)
 
 def finalizer_node(state: dict) -> dict:
     trace_id = state.get("trace_id", "na")
-    if state.get("iteration_count", 0) >= 3:
-        logger.warning("finalizer.iteration_guard trace_id=%s iteration=%s", trace_id, state.get("iteration_count", 0))
-        return {"summary": "I need one more detail to complete this booking safely."}
-    existing_summary = state.get("summary")
-    if existing_summary and existing_summary.strip().lower() != "done.":
-        logger.info("finalizer.use_existing_summary trace_id=%s summary=%r", trace_id, existing_summary[:220])
-        return {"summary": existing_summary}
-
     response_mode = state.get("response_mode", "calendar_action")
     result = state.get("execution_result", {})
+
+    if state.get("iteration_count", 0) >= 3:
+        logger.warning(
+            "finalizer.iteration_guard trace_id=%s iteration=%s",
+            trace_id,
+            state.get("iteration_count", 0),
+        )
+        return _finalize(
+            state=state,
+            summary="I need one more detail to complete this booking safely.",
+        )
+
+    existing_summary = state.get("summary")
+    if existing_summary and existing_summary.strip().lower() != "done.":
+        logger.info(
+            "finalizer.use_existing_summary trace_id=%s summary=%r",
+            trace_id,
+            existing_summary[:220],
+        )
+        return _finalize(state=state, summary=existing_summary)
 
     if response_mode == "calendar_query":
         query_summary = _calendar_query_summary(state=state, result=result)
         if query_summary:
-            logger.info("finalizer.calendar_query_fallback trace_id=%s summary=%r", trace_id, query_summary[:220])
-            return {"summary": query_summary}
+            logger.info(
+                "finalizer.calendar_query trace_id=%s summary=%r",
+                trace_id,
+                query_summary[:220],
+            )
+            return _finalize(state=state, summary=query_summary)
 
     if response_mode == "general_chat":
         logger.info("finalizer.general_chat_default trace_id=%s", trace_id)
-        return {"summary": "I'm here and ready to help with your day."}
+        return _finalize(state=state, summary="I'm here and ready to help with your day.")
 
-    llm = build_llm(bound_tools=[])
-    msg = llm.invoke(
-        [
-            {"role": "system", "content": render_finalizer_system_prompt(response_mode)},
-            {"role": "user", "content": f"Execution result: {result}"},
-        ]
+    summary = _action_summary_with_fallback(response_mode=response_mode, result=result, trace_id=trace_id)
+    return _finalize(state=state, summary=summary)
+
+
+def _finalize(state: dict, summary: str) -> dict:
+    response_mode = state.get("response_mode", "calendar_action")
+    result = state.get("execution_result", {})
+    final_response = _build_final_response(
+        summary=summary,
+        response_mode=response_mode,
+        result=result,
+        hitl_action_id=state.get("hitl_action_id"),
+        alternatives=state.get("alternatives"),
     )
-    summary = getattr(msg, "content", str(msg)).strip()
-    if summary and summary.lower() != "done.":
-        logger.info("finalizer.llm_summary trace_id=%s summary=%r", trace_id, summary[:220])
-        return {"summary": summary}
+    return {
+        "summary": summary,
+        "response_mode": response_mode,
+        "final_response": final_response,
+    }
+
+
+def _build_final_response(
+    summary: str,
+    response_mode: str,
+    result: dict,
+    hitl_action_id: str | None,
+    alternatives: list[dict] | None,
+) -> dict:
+    event = result.get("event", {}) if isinstance(result, dict) else {}
+    status = result.get("status", "ok") if isinstance(result, dict) else "ok"
+    latest_event_id = event.get("id") if isinstance(event, dict) else None
+    out = {
+        "status": status,
+        "summary": summary,
+        "response_mode": response_mode,
+        "meet_link": event.get("meet_link") if isinstance(event, dict) else None,
+        "invite_status": event.get("invite_status") if isinstance(event, dict) else None,
+        "latest_event_id": latest_event_id,
+        "hitl_action_id": hitl_action_id,
+        "alternatives": alternatives if isinstance(alternatives, list) else result.get("alternatives", []),
+    }
+    return out
+
+
+def _action_summary_with_fallback(response_mode: str, result: dict, trace_id: str) -> str:
+    try:
+        llm = build_llm(bound_tools=[])
+        msg = llm.invoke(
+            [
+                {"role": "system", "content": render_finalizer_system_prompt(response_mode)},
+                {"role": "user", "content": f"Execution result: {result}"},
+            ]
+        )
+        summary = getattr(msg, "content", str(msg)).strip()
+        if summary and summary.lower() != "done.":
+            logger.info("finalizer.llm_summary trace_id=%s summary=%r", trace_id, summary[:220])
+            return summary
+    except Exception:
+        logger.exception("finalizer.action_llm_error trace_id=%s", trace_id)
     fallback = _action_fallback(result)
     logger.info("finalizer.action_fallback trace_id=%s summary=%r", trace_id, fallback[:220])
-    return {"summary": fallback}
+    return fallback
 
 
 def _calendar_query_summary(state: dict, result: dict) -> str:
@@ -137,13 +201,6 @@ def _calendar_query_context_for_llm(result: dict, timezone: str, user_message: s
 def _parse_dt(value: str | None, timezone: str) -> datetime | None:
     if not value:
         return None
-
-
-def _looks_like_iso_text(text: str) -> bool:
-    return bool(
-        re.search(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}", text)
-        or re.search(r"[+-]\d{2}:\d{2}", text)
-    )
     try:
         text = value.strip()
         if text.endswith("Z"):
@@ -154,6 +211,13 @@ def _looks_like_iso_text(text: str) -> bool:
         return parsed.astimezone(ZoneInfo(timezone))
     except Exception:
         return None
+
+
+def _looks_like_iso_text(text: str) -> bool:
+    return bool(
+        re.search(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}", text)
+        or re.search(r"[+-]\d{2}:\d{2}", text)
+    )
 
 
 def _calendar_query_fallback(result: dict, timezone: str, user_message: str) -> str:
@@ -176,9 +240,15 @@ def _calendar_query_fallback(result: dict, timezone: str, user_message: str) -> 
         if start_dt:
             day_label = relative_day_label(start_dt.date(), now_local)
             if asked_tomorrow and day_label == "tomorrow":
-                return f"Tomorrow looks good. You have {count_text}, starting with {title} at {format_time_only(start_dt)}."
+                return (
+                    f"Tomorrow looks good. You have {count_text}, "
+                    f"starting with {title} at {format_time_only(start_dt)}."
+                )
             if asked_today and day_label == "today":
-                return f"Today you have {count_text}, starting with {title} at {format_time_only(start_dt)}."
+                return (
+                    f"Today you have {count_text}, "
+                    f"starting with {title} at {format_time_only(start_dt)}."
+                )
             if day_label in {"today", "tomorrow"}:
                 when = f"{day_label} at {format_time_only(start_dt)}"
             else:

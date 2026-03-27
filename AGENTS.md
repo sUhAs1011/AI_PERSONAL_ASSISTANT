@@ -25,12 +25,13 @@
 - `app/graph/builder.py`: LangGraph wiring (`agent -> tool_node -> tool_result -> finalizer/hitl`).
 - `app/graph/nodes/agent_node.py`: tool-bound LLM call, retry/fallback for `tool_use_failed`.
 - `app/graph/nodes/hitl_node.py`: writes pending action + alternatives.
-- `app/graph/nodes/finalizer_node.py`: tool-free summarization call.
+- `app/graph/nodes/finalizer_node.py`: unified response finalizer (single source for normalized response payloads).
 - `app/tools/calendar_proxy.py`: proxy `@tool` functions and MCP contract normalization.
 - `app/services/calendar/mcp_client.py`: MCP HTTP caller (`/tools/call`).
 - `app/services/time_utils.py`: natural-time parsing and date range resolution.
 - `app/services/time_formatting.py`: human-friendly calendar datetime formatting for user-visible summaries.
 - `app/services/hitl/pending_repo.py`: pending HITL action persistence.
+- `app/services/hitl/resolve_action.py`: HITL decision resolver (builds `execution_result`, no user-facing text).
 - `app/services/memory/preferences_repo.py`: user preference persistence.
 - `frontend/src/App.jsx`: current primary UI (dashboard/chat/preferences).
 - `frontend/src/lib/api.js`: frontend API client wrappers.
@@ -132,7 +133,7 @@ npm run build
 - `app/llm/prompts.py` now includes `render_general_chat_prompt` and `render_finalizer_system_prompt`.
 - Updated API response contract:
 - `app/schemas.py` `ChatResponse` now includes `response_mode`.
-- `app/main.py` now propagates `response_mode` and uses safer summary fallback (`I need one more detail...`).
+- `app/main.py` now normalizes responses through finalizer payloads and uses safer summary fallback (`I need one more detail...`).
 - Frontend chat UX wiring:
 - `frontend/src/App.jsx` uses `response_mode` for message phrasing and improved failure response text.
 - `frontend/src/lib/api.js` default backend base set to `http://localhost:8001`.
@@ -157,3 +158,11 @@ npm run build
 - Updated calendar query prompt guidance in `app/llm/prompts.py` to enforce natural language style and readable times.
 - Removed frontend `"Calendar update: "` prefix in `frontend/src/App.jsx` so backend assistant text is shown directly.
 - Added regression coverage in `tests/graph/test_finalizer_modes.py` for natural `"tomorrow"` phrasing and ISO-leak prevention.
+
+## Recent HITL Finalization Unification
+- `/hitl/respond` no longer hardcodes user-facing summaries; it resolves action into `execution_result` and runs `finalizer_node` before returning `ChatResponse`.
+- Added `app/services/hitl/resolve_action.py` as the deterministic HITL resolver layer.
+- `finalizer_node` now emits a normalized `final_response` payload (`status`, `summary`, `response_mode`, event metadata, HITL metadata), and `/chat` + `/hitl/respond` consume that contract.
+- Added tests:
+- `tests/graph/test_finalizer_hitl_contract.py`
+- Updated `tests/api/test_hitl_rebook.py`

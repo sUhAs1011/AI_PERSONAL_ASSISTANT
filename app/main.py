@@ -8,6 +8,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from app.core.logging import configure_logging
 from app.graph.builder import build_graph
+from app.graph.nodes.finalizer_node import finalizer_node
 from app.schemas import (
     ChatRequest,
     ChatResponse,
@@ -15,6 +16,7 @@ from app.schemas import (
     PreferencesUpsertRequest,
 )
 from app.services.hitl.pending_repo import pending_repo
+from app.services.hitl.resolve_action import resolve_hitl_action
 from app.services.memory.preferences_repo import PreferencesRepo
 from app.tools.calendar_proxy import book_event
 
@@ -31,6 +33,38 @@ app.add_middleware(
 )
 booking_graph = build_graph()
 preferences_repo = PreferencesRepo()
+
+
+def _normalized_final_response(result: dict, default_response_mode: str) -> dict:
+    execution_result = result.get("execution_result", {}) if isinstance(result, dict) else {}
+    event = execution_result.get("event", {}) if isinstance(execution_result, dict) else {}
+    final_response = result.get("final_response", {}) if isinstance(result, dict) else {}
+    if not isinstance(final_response, dict):
+        final_response = {}
+
+    status = final_response.get("status")
+    if not status:
+        status = execution_result.get("status", "ok") if isinstance(execution_result, dict) else "ok"
+    response_mode = final_response.get("response_mode") or result.get("response_mode", default_response_mode)
+    summary = final_response.get("summary") or result.get("summary") or "I need one more detail to help with that."
+    latest_event_id = final_response.get("latest_event_id")
+    if latest_event_id is None and isinstance(event, dict):
+        latest_event_id = event.get("id")
+
+    return {
+        "status": status,
+        "summary": summary,
+        "response_mode": response_mode,
+        "meet_link": final_response.get("meet_link")
+        if "meet_link" in final_response
+        else (event.get("meet_link") if isinstance(event, dict) else None),
+        "invite_status": final_response.get("invite_status")
+        if "invite_status" in final_response
+        else (event.get("invite_status") if isinstance(event, dict) else None),
+        "latest_event_id": latest_event_id,
+        "hitl_action_id": final_response.get("hitl_action_id", result.get("hitl_action_id")),
+        "alternatives": final_response.get("alternatives", result.get("alternatives", [])),
+    }
 
 
 @app.get("/health")
@@ -102,10 +136,10 @@ def chat(payload: ChatRequest) -> ChatResponse:
             payload.user_id,
         )
         raise
-    summary = result.get("summary") or "I need one more detail to help with that."
-    response_mode = result.get("response_mode", "general_chat")
-    event = result.get("execution_result", {}).get("event", {})
-    latest_event_id = event.get("id")
+    normalized = _normalized_final_response(result, default_response_mode="general_chat")
+    summary = normalized["summary"]
+    response_mode = normalized["response_mode"]
+    latest_event_id = normalized["latest_event_id"]
     assistant_text = f"{summary} [event_id={latest_event_id}]" if latest_event_id else summary
     updated_history = [
         *payload.conversation_history,
@@ -117,19 +151,19 @@ def chat(payload: ChatRequest) -> ChatResponse:
         trace_id,
         payload.user_id,
         response_mode,
-        result.get("execution_result", {}).get("status", "ok"),
+        normalized["status"],
         result.get("iteration_count"),
         summary[:220],
     )
     return ChatResponse(
-        status=result.get("execution_result", {}).get("status", "ok"),
+        status=normalized["status"],
         summary=summary,
         response_mode=response_mode,
-        meet_link=event.get("meet_link"),
-        invite_status=event.get("invite_status"),
+        meet_link=normalized["meet_link"],
+        invite_status=normalized["invite_status"],
         latest_event_id=latest_event_id,
-        hitl_action_id=result.get("hitl_action_id"),
-        alternatives=result.get("alternatives", []),
+        hitl_action_id=normalized["hitl_action_id"],
+        alternatives=normalized["alternatives"],
         conversation_history=updated_history,
     )
 
@@ -145,41 +179,43 @@ def respond_hitl(payload: HitlResponse) -> ChatResponse:
         payload.selected_start_iso,
     )
     pending = pending_repo.get(payload.action_id)
-    if not pending:
-        logger.warning("hitl.respond.invalid_action trace_id=%s action_id=%s", trace_id, payload.action_id)
-        return ChatResponse(status="error", summary="Invalid action id", response_mode="calendar_action")
-    if payload.decision != "reschedule" or not payload.selected_start_iso:
-        logger.info("hitl.respond.no_rebooking trace_id=%s action_id=%s", trace_id, payload.action_id)
-        return ChatResponse(
-            status="cancelled", summary="No rebooking action taken", response_mode="calendar_action"
-        )
+    resolved = resolve_hitl_action(
+        pending=pending,
+        decision=payload.decision,
+        selected_start_iso=payload.selected_start_iso,
+        action_id=payload.action_id,
+        book_event_tool=book_event,
+    )
 
-    result = book_event.invoke(
+    finalized = finalizer_node(
         {
-            "user_id": pending["user_id"],
-            "timezone": pending.get("timezone", "Asia/Kolkata"),
-            "title": pending["payload"]["title"],
-            "start_iso": payload.selected_start_iso,
-            "duration_minutes": pending["payload"].get("duration_minutes", 30),
-            "attendees": pending["payload"].get("attendees", []),
-            "send_invites": pending["payload"].get("send_invites", False),
-            "add_meet_link": pending["payload"].get("add_meet_link", False),
+            "trace_id": trace_id,
+            "user_id": resolved.get("user_id"),
+            "timezone": resolved.get("timezone", "Asia/Kolkata"),
+            "response_mode": "calendar_action",
+            "execution_result": resolved.get("execution_result", {}),
+            "hitl_action_id": resolved.get("hitl_action_id"),
+            "alternatives": resolved.get("alternatives", []),
         }
     )
-    event = result.get("event", {})
+    normalized = _normalized_final_response(finalized, default_response_mode="calendar_action")
+
     logger.info(
         "hitl.respond.end trace_id=%s action_id=%s status=%s event_id=%s",
         trace_id,
         payload.action_id,
-        result.get("status", "ok"),
-        event.get("id"),
+        normalized["status"],
+        normalized["latest_event_id"],
     )
     return ChatResponse(
-        status=result.get("status", "ok"),
-        summary="Rescheduled successfully",
-        response_mode="calendar_action",
-        meet_link=event.get("meet_link"),
-        invite_status=event.get("invite_status"),
+        status=normalized["status"],
+        summary=normalized["summary"],
+        response_mode=normalized["response_mode"],
+        meet_link=normalized["meet_link"],
+        invite_status=normalized["invite_status"],
+        latest_event_id=normalized["latest_event_id"],
+        hitl_action_id=normalized["hitl_action_id"],
+        alternatives=normalized["alternatives"],
     )
 
 

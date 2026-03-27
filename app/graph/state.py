@@ -9,6 +9,7 @@ class AgentState(MessagesState, total=False):
     iteration_count: int
     response_mode: str
     summary: str
+    final_response: dict
     pending_clarification: str | None
     execution_result: dict
     alternatives: list[dict]
