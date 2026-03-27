@@ -21,9 +21,6 @@ def route_after_agent(state: dict) -> str:
     if state.get("needs_hitl"):
         logger.info("graph.route trace_id=%s route=hitl reason=needs_hitl", trace_id)
         return "hitl"
-    if state.get("execution_result", {}).get("status") == "conflict":
-        logger.info("graph.route trace_id=%s route=hitl reason=conflict_status", trace_id)
-        return "hitl"
     if state.get("pending_clarification"):
         logger.info("graph.route trace_id=%s route=finalizer reason=pending_clarification", trace_id)
         return "finalizer"

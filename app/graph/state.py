@@ -10,7 +10,6 @@ class AgentState(MessagesState, total=False):
     response_mode: str
     summary: str
     pending_clarification: str | None
-    extracted: dict
     execution_result: dict
     alternatives: list[dict]
     needs_hitl: bool

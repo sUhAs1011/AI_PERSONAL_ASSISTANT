@@ -1,9 +1,8 @@
-import json
 import logging
 from datetime import datetime
 
 from groq import BadRequestError
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from app.llm.client import build_llm
 from app.llm.prompts import render_agent_system_prompt, render_general_chat_prompt
@@ -138,26 +137,5 @@ def agent_node(state: dict) -> dict:
         "iteration_count": state.get("iteration_count", 0) + 1,
         "response_mode": route.mode.value,
     }
-
-    # ToolNode writes tool outputs into messages as ToolMessage objects.
-    # We inspect schedule_mutual output to trigger HITL path.
-    for msg in reversed(state_messages):
-        if isinstance(msg, ToolMessage) and getattr(msg, "name", None) == "schedule_mutual":
-            try:
-                content = json.loads(msg.content) if isinstance(msg.content, str) else msg.content
-                alts = content.get("alternatives", [])
-                if alts:
-                    update["needs_hitl"] = True
-                    update["alternatives"] = alts
-                    update["execution_result"] = {"status": "conflict", "alternatives": alts}
-                    logger.info(
-                        "agent.hitl_detected trace_id=%s alternatives=%s",
-                        trace_id,
-                        len(alts),
-                    )
-            except Exception:
-                logger.exception("agent.schedule_mutual_parse_error trace_id=%s", trace_id)
-                pass
-            break
 
     return update

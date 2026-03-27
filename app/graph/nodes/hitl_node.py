@@ -12,11 +12,11 @@ def hitl_node(state: dict) -> dict:
     action_id = pending_repo.save(
         user_id=state["user_id"],
         payload={
-            "title": state.get("extracted", {}).get("title", "meeting"),
-            "attendees": state.get("extracted", {}).get("attendees", []),
-            "duration_minutes": state.get("extracted", {}).get("duration_minutes", 30),
-            "send_invites": state.get("extracted", {}).get("send_invites", False),
-            "add_meet_link": state.get("extracted", {}).get("add_meet_link", False),
+            "title": "meeting",
+            "attendees": [],
+            "duration_minutes": 30,
+            "send_invites": False,
+            "add_meet_link": False,
         },
         alternatives=alternatives,
         timezone=state.get("timezone", "Asia/Kolkata"),
