@@ -1,0 +1,17 @@
+from langgraph.graph import MessagesState
+
+
+class AgentState(MessagesState, total=False):
+    trace_id: str
+    user_id: str
+    timezone: str
+    preferences: dict
+    iteration_count: int
+    response_mode: str
+    summary: str
+    pending_clarification: str | None
+    extracted: dict
+    execution_result: dict
+    alternatives: list[dict]
+    needs_hitl: bool
+    hitl_action_id: str

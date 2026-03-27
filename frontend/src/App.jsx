@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { chat, submitHitlDecision, getPreferences, putPreferences } from './lib/api'
 import {
   Calendar,
   MessageSquare,
@@ -264,7 +265,13 @@ const DashboardPage = () => {
 
 // --- CHAT PAGE ---
 const ChatPage = () => {
+  const userId = 'u1'
   const [inputText, setInputText] = useState('')
+  const [messages, setMessages] = useState([
+    { type: 'ai', content: 'I can help you book, reschedule, or check availability. Try: "Book a design review tomorrow at 3 PM with alex@example.com".' }
+  ])
+  const [conversationHistory, setConversationHistory] = useState([])
+  const [isSending, setIsSending] = useState(false)
   const [isListening, setIsListening] = useState(false)
   const recognitionRef = useRef(null)
 
@@ -303,12 +310,55 @@ const ChatPage = () => {
     }
   }
 
-  const messages = [
-    { type: 'user', content: 'Schedule a meeting with the design team for tomorrow afternoon.' },
-    { type: 'ai', content: "I've scanned your calendar for tomorrow. Here are some open slots that work for everyone on the design team:", options: ['2:00 PM', '3:30 PM', '4:15 PM'] },
-    { type: 'user', content: "Let's do 3:00 PM instead, I need to leave early." },
-    { type: 'conflict', content: { title: 'Schedule Conflict', msg: 'You already have a meeting at 3 PM (Weekly Sync).' } }
-  ]
+  const handleSend = async () => {
+    const message = inputText.trim()
+    if (!message || isSending) return
+
+    setMessages((prev) => [...prev, { type: 'user', content: message }])
+    setInputText('')
+    setIsSending(true)
+
+    try {
+      const response = await chat({
+        user_id: userId,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        message,
+        conversation_history: conversationHistory,
+      })
+
+      setConversationHistory(response.conversation_history || [])
+
+      if (response.status === 'needs_hitl') {
+        setMessages((prev) => [
+          ...prev,
+          {
+            type: 'conflict',
+            content: {
+              title: 'Schedule Conflict',
+              msg: response.summary || 'There is a scheduling conflict.',
+              hitlActionId: response.hitl_action_id,
+              alternatives: response.alternatives || [],
+            },
+          },
+        ])
+      } else {
+        const safeSummary = response.summary || 'I need one more detail to help with that.'
+        const meetSuffix = response.meet_link ? ` Meet: ${response.meet_link}` : ''
+        const inviteSuffix = response.invite_status ? ` Invite: ${response.invite_status}` : ''
+        setMessages((prev) => [
+          ...prev,
+          { type: 'ai', content: `${safeSummary}${inviteSuffix}${meetSuffix}` },
+        ])
+      }
+    } catch (err) {
+      setMessages((prev) => [
+        ...prev,
+        { type: 'ai', content: "I couldn't reach the calendar service right now. Want me to retry?" },
+      ])
+    } finally {
+      setIsSending(false)
+    }
+  }
 
   return (
     <div className="flex flex-col h-[calc(100vh-160px)]">
@@ -342,24 +392,42 @@ const ChatPage = () => {
                   <div className="p-8">
                     <span className="text-[11px] font-black text-slate-400 uppercase tracking-[0.2em] mb-6 block">Suggested Alternatives</span>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
-                      {[
-                        { label: 'Reschedule Weekly Sync', sub: 'Move to Friday at 10:00 AM', icon: Calendar },
-                        { label: 'Earlier Slot: 1:30 PM', sub: 'Both parties are available', icon: Clock },
-                      ].map((item, j) => (
-                        <div key={j} className="bg-slate-50 p-5 rounded-[24px] flex items-center gap-4 cursor-pointer hover:bg-brand/5 border-2 border-transparent hover:border-brand/10 transition-all group">
+                      {(m.content.alternatives || []).map((alt, j) => (
+                        <button
+                          key={alt.start_iso || j}
+                          onClick={async () => {
+                            try {
+                              const result = await submitHitlDecision({
+                                actionId: m.content.hitlActionId,
+                                decision: 'reschedule',
+                                selectedStartIso: alt.start_iso,
+                              })
+                              setMessages((prev) => [
+                                ...prev,
+                                { type: 'ai', content: result.summary || `Rescheduled to ${alt.start_iso}` },
+                              ])
+                            } catch (_err) {
+                              setMessages((prev) => [
+                                ...prev,
+                                { type: 'ai', content: 'Failed to submit HITL decision.' },
+                              ])
+                            }
+                          }}
+                          className="bg-slate-50 p-5 rounded-[24px] text-left flex items-center gap-4 cursor-pointer hover:bg-brand/5 border-2 border-transparent hover:border-brand/10 transition-all group"
+                        >
                           <div className="w-12 h-12 rounded-2xl bg-brand/10 flex items-center justify-center text-brand">
-                            <item.icon size={20} />
+                            <Clock size={20} />
                           </div>
                           <div className="flex-1">
-                            <h5 className="font-bold text-slate-900 text-sm">{item.label}</h5>
-                            <p className="text-[11px] font-bold text-slate-400 mt-1">{item.sub}</p>
+                            <h5 className="font-bold text-slate-900 text-sm">{alt.label || 'Suggested Slot'}</h5>
+                            <p className="text-[11px] font-bold text-slate-400 mt-1">{alt.start_iso || 'Alternative time'}</p>
                           </div>
                           <ChevronRight size={16} className="text-slate-300 group-hover:text-brand" />
-                        </div>
+                        </button>
                       ))}
                     </div>
-                    <button className="w-full bg-brand text-white font-bold py-5 rounded-[24px] text-[15px] shadow-2xl shadow-brand/30">
-                      Approve Suggestion
+                    <button className="w-full bg-slate-100 text-slate-600 font-bold py-5 rounded-[24px] text-[15px]">
+                      Pick one slot above
                     </button>
                   </div>
                 </>
@@ -391,10 +459,20 @@ const ChatPage = () => {
           type="text"
           value={inputText}
           onChange={(e) => setInputText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              handleSend()
+            }
+          }}
           placeholder={isListening ? "Listening..." : "Message SmartOwner AI..."}
           className="flex-1 bg-transparent border-none outline-none text-base font-medium"
         />
-        <button className="w-12 h-12 bg-brand text-white rounded-full flex items-center justify-center shadow-xl shadow-brand/30 transition-transform active:scale-90 flex-shrink-0">
+        <button
+          onClick={handleSend}
+          disabled={isSending}
+          className="w-12 h-12 bg-brand text-white rounded-full flex items-center justify-center shadow-xl shadow-brand/30 transition-transform active:scale-90 flex-shrink-0 disabled:opacity-60"
+        >
           <Send size={22} fill="currentColor" className="ml-1" />
         </button>
         {isListening && (
@@ -413,6 +491,9 @@ const ChatPage = () => {
 
 // --- PREFERENCES PAGE ---
 const PreferencesPage = () => {
+  const userId = 'u1'
+  const [noMeetingsBeforeHour, setNoMeetingsBeforeHour] = useState(9)
+  const [prefStatus, setPrefStatus] = useState('')
   const [duration, setDuration] = useState(0)
   const [paddingType, setPaddingType] = useState('pre')
   const [aiScheduling, setAiScheduling] = useState(true)
@@ -427,6 +508,29 @@ const PreferencesPage = () => {
 
   const labels = [0, 15, 30, 45, 60, 90, 120]
   const trackRef = useRef(null)
+
+  useEffect(() => {
+    const loadPrefs = async () => {
+      try {
+        const prefs = await getPreferences(userId)
+        if (typeof prefs.no_meetings_before_hour === 'number') {
+          setNoMeetingsBeforeHour(prefs.no_meetings_before_hour)
+        }
+      } catch (_err) {
+        setPrefStatus('Failed to load preferences')
+      }
+    }
+    loadPrefs()
+  }, [])
+
+  const savePrefs = async () => {
+    try {
+      await putPreferences(userId, { no_meetings_before_hour: noMeetingsBeforeHour })
+      setPrefStatus('Preferences saved')
+    } catch (_err) {
+      setPrefStatus('Failed to save preferences')
+    }
+  }
 
   const toggleRange = (index) => {
     const newRanges = [...ranges]
@@ -523,6 +627,35 @@ const PreferencesPage = () => {
       <div className="mb-10">
         <h2 className="text-3xl font-black text-slate-900 mb-3 tracking-tight">Preferences</h2>
         <p className="text-[15px] text-slate-500 leading-relaxed font-medium max-w-md">Fine-tune your availability and habits for maximum productivity.</p>
+      </div>
+
+      <div className="premium-card p-6 mb-8">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div>
+            <h3 className="font-bold text-slate-900">No Meetings Before</h3>
+            <p className="text-sm text-slate-500">Used by the backend for preference enforcement.</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <select
+              value={noMeetingsBeforeHour}
+              onChange={(e) => setNoMeetingsBeforeHour(Number(e.target.value))}
+              className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-semibold"
+            >
+              {Array.from({ length: 24 }, (_, h) => (
+                <option key={h} value={h}>
+                  {String(h).padStart(2, '0')}:00
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={savePrefs}
+              className="bg-brand text-white font-bold px-5 py-2 rounded-xl"
+            >
+              Save
+            </button>
+          </div>
+        </div>
+        {prefStatus && <p className="text-xs text-slate-500 mt-3">{prefStatus}</p>}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">

@@ -35,3 +35,51 @@ pnpm-debug.log*
 # Vite
 *.log
 frontend/.vite/
+
+
+# Python runtime/cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+.mypy_cache/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Local env/secrets
+.env
+.env.*
+!.env.example
+frontend/.env
+frontend/.env.*
+
+# Local app state/logs
+app.db
+logs/
+*.log
+
+# Python packaging/build artifacts
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Node/Vite artifacts
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/dist-ssr/
+frontend/.vite/
+
+# OS/editor junk
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
