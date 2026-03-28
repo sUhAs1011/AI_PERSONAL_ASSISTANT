@@ -147,3 +147,33 @@ def test_update_event_location_tool_message_populates_action_execution_result():
     assert result["execution_result"]["status"] == "updated"
     assert result["execution_result"]["event"]["id"] == "evt_42"
     assert result["execution_result"]["location"] == "Pizza Bakery indiranagar"
+
+
+def test_book_event_conflict_tool_message_preserves_alternatives_for_hitl():
+    state = {
+        "messages": [
+            ToolMessage(
+                content=json.dumps(
+                    {
+                        "status": "conflict",
+                        "error_code": "time_conflict",
+                        "title": "Casual Call",
+                        "start_iso": "2026-03-28T15:00:00+05:30",
+                        "alternatives": [
+                            {
+                                "start_iso": "2026-03-28T16:00:00+05:30",
+                                "end_iso": "2026-03-28T16:30:00+05:30",
+                                "label": "Sat 04:00 PM - 04:30 PM",
+                            }
+                        ],
+                    }
+                ),
+                tool_call_id="call_6",
+                name="book_event",
+            )
+        ]
+    }
+    result = tool_result_node(state)
+    assert result["response_mode"] == "calendar_action"
+    assert result["execution_result"]["status"] == "conflict"
+    assert result["execution_result"]["alternatives"][0]["start_iso"] == "2026-03-28T16:00:00+05:30"

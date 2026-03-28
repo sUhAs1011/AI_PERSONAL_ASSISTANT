@@ -149,6 +149,48 @@ def _event_start_end(event: dict, timezone: str) -> tuple[datetime | None, datet
     return start, end
 
 
+def _find_overlapping_event(
+    events: list[dict],
+    timezone: str,
+    requested_start: datetime,
+    requested_end: datetime,
+) -> dict | None:
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        event_start, event_end = _event_start_end(event, timezone)
+        if event_start is None or event_end is None:
+            continue
+        if event_start < requested_end and event_end > requested_start:
+            return event
+    return None
+
+
+def _free_windows_to_alternatives(windows: list[dict], duration_minutes: int) -> list[dict]:
+    alternatives: list[dict] = []
+    duration = timedelta(minutes=duration_minutes)
+    for window in windows:
+        if not isinstance(window, dict):
+            continue
+        start_dt = _parse_iso_datetime(str(window.get("start_iso") or window.get("start") or ""))
+        end_dt = _parse_iso_datetime(str(window.get("end_iso") or window.get("end") or ""))
+        if start_dt is None or end_dt is None:
+            continue
+        if start_dt + duration > end_dt:
+            continue
+        slot_end = start_dt + duration
+        alternatives.append(
+            {
+                "start_iso": start_dt.isoformat(),
+                "end_iso": slot_end.isoformat(),
+                "label": f"{start_dt.strftime('%a %I:%M %p')} - {slot_end.strftime('%I:%M %p')}",
+            }
+        )
+        if len(alternatives) >= 5:
+            break
+    return alternatives
+
+
 def _looks_like_title_hint(value: str) -> bool:
     token = (value or "").strip()
     if not token:
@@ -334,6 +376,12 @@ def get_event_location(
         if isinstance(cached, dict):
             status = cached.get("status")
             if status == "not_found":
+                logger.info(
+                    "tool.get_event_location.cache_result user_id=%s title_hint=%r date_range=%s status=not_found",
+                    user_id,
+                    title_hint,
+                    normalized_range,
+                )
                 return {
                     "status": "not_found",
                     "title_hint": title_hint,
@@ -347,6 +395,13 @@ def get_event_location(
                     summary = cached.get("summary") or f"Your {title} is at {location}."
                 else:
                     summary = cached.get("summary") or f"I found {title}, but it doesn't have a location set yet."
+                logger.info(
+                    "tool.get_event_location.cache_result user_id=%s title_hint=%r date_range=%s status=ok location_set=%s",
+                    user_id,
+                    title_hint,
+                    normalized_range,
+                    bool(location),
+                )
                 return {
                     "status": "ok",
                     "title": title,
@@ -354,6 +409,13 @@ def get_event_location(
                     "start_iso": cached.get("start_iso"),
                     "summary": summary,
                 }
+
+    logger.info(
+        "tool.get_event_location.cache_miss_or_bypass user_id=%s title_hint=%r date_range=%s",
+        user_id,
+        title_hint,
+        normalized_range,
+    )
 
     start_iso, end_iso = _resolve_duration_range(date_range=date_range, timezone=timezone)
     raw = _client().call_tool(
@@ -363,7 +425,12 @@ def get_event_location(
     events = raw.get("events", []) if isinstance(raw, dict) else []
     match = _pick_best_event(events=events, title_hint=title_hint)
     if match is None:
-        logger.info("tool.get_event_location.not_found user_id=%s title_hint=%r", user_id, title_hint)
+        logger.info(
+            "tool.get_event_location.mcp_not_found user_id=%s title_hint=%r date_range=%s",
+            user_id,
+            title_hint,
+            normalized_range,
+        )
         return {
             "status": "not_found",
             "title_hint": title_hint,
@@ -378,7 +445,7 @@ def get_event_location(
     else:
         summary = f"I found {title}, but it doesn't have a location set yet."
     logger.info(
-        "tool.get_event_location.ok user_id=%s title=%r has_location=%s",
+        "tool.get_event_location.mcp_result user_id=%s title=%r location_set=%s",
         user_id,
         title,
         bool(location),
@@ -480,6 +547,87 @@ def book_event(
             "start_iso": start_iso,
             "attendee_count": len(normalized_attendees),
         }
+
+    requested_start_dt = _parse_iso_datetime(start_iso)
+    if requested_start_dt is not None and requested_start_dt.tzinfo is None:
+        requested_start_dt = requested_start_dt.replace(tzinfo=ZoneInfo(timezone))
+    if requested_start_dt is not None:
+        requested_start_dt = requested_start_dt.astimezone(ZoneInfo(timezone))
+
+    if requested_start_dt is not None:
+        requested_end_dt = requested_start_dt + timedelta(minutes=duration_minutes)
+        try:
+            raw_existing = _client().call_tool(
+                "mcp_google_calendar_find_events",
+                {
+                    "user_id": user_id,
+                    "start_iso": requested_start_dt.isoformat(),
+                    "end_iso": requested_end_dt.isoformat(),
+                },
+            )
+            existing_events = raw_existing.get("events", []) if isinstance(raw_existing, dict) else []
+            overlapping = _find_overlapping_event(
+                events=existing_events,
+                timezone=timezone,
+                requested_start=requested_start_dt,
+                requested_end=requested_end_dt,
+            )
+            if isinstance(overlapping, dict):
+                conflict_start, conflict_end = _event_start_end(overlapping, timezone)
+                conflict_title = str(overlapping.get("summary") or overlapping.get("title") or "another event")
+                day_start = requested_start_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+                day_end = day_start + timedelta(days=1)
+                alternatives: list[dict] = []
+                try:
+                    free_busy_raw = _client().call_tool(
+                        "mcp_google_calendar_query_free_busy",
+                        {
+                            "user_id": user_id,
+                            "start_iso": day_start.isoformat(),
+                            "end_iso": day_end.isoformat(),
+                            "attendees": valid_attendees,
+                        },
+                    )
+                    windows = free_busy_raw.get("free_windows", []) if isinstance(free_busy_raw, dict) else []
+                    alternatives = _free_windows_to_alternatives(windows=windows, duration_minutes=duration_minutes)
+                except Exception:
+                    logger.exception(
+                        "tool.book_event.conflict_alternatives_failed user_id=%s title=%r start_iso=%s",
+                        user_id,
+                        title,
+                        start_iso,
+                    )
+
+                logger.info(
+                    "tool.book_event.conflict_detected user_id=%s title=%r start_iso=%s conflicting_event_id=%s alternatives=%s",
+                    user_id,
+                    title,
+                    start_iso,
+                    overlapping.get("id"),
+                    len(alternatives),
+                )
+                return {
+                    "status": "conflict",
+                    "error_code": "time_conflict",
+                    "title": title,
+                    "start_iso": start_iso,
+                    "duration_minutes": duration_minutes,
+                    "conflicting_event": {
+                        "id": overlapping.get("id"),
+                        "title": conflict_title,
+                        "start_iso": conflict_start.isoformat() if conflict_start else None,
+                        "end_iso": conflict_end.isoformat() if conflict_end else None,
+                    },
+                    "alternatives": alternatives,
+                    "summary": f"That time conflicts with {conflict_title}.",
+                }
+        except Exception:
+            logger.exception(
+                "tool.book_event.conflict_check_failed user_id=%s title=%r start_iso=%s",
+                user_id,
+                title,
+                start_iso,
+            )
 
     try:
         logger.info("tool.book_event.start user_id=%s title=%r start_iso=%s", user_id, title, start_iso)
@@ -767,6 +915,12 @@ def cancel_event(user_id: str, event_id: str, timezone: str = "Asia/Kolkata") ->
             timezone=timezone,
             event_ref_or_hint=event_id,
         )
+        logger.info(
+            "tool.cancel_event.cache_lookup user_id=%s event_id=%s found=%s",
+            user_id,
+            event_id,
+            isinstance(cached_event, dict),
+        )
     except Exception:
         logger.exception("tool.cancel_event.cache_lookup_failed user_id=%s event_id=%s", user_id, event_id)
 
@@ -787,6 +941,13 @@ def cancel_event(user_id: str, event_id: str, timezone: str = "Asia/Kolkata") ->
                 out["start_iso"] = start_iso.strip()
             if isinstance(location, str):
                 out["location"] = location.strip()
+        logger.info(
+            "tool.cancel_event.done user_id=%s event_id=%s has_title=%s has_start=%s",
+            user_id,
+            event_id,
+            bool(out.get("title")),
+            bool(out.get("start_iso")),
+        )
         return out
     except Exception as exc:
         logger.exception("tool.cancel_event.error user_id=%s event_id=%s", user_id, event_id)

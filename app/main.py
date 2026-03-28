@@ -78,10 +78,23 @@ def _normalized_final_response(result: dict, default_response_mode: str) -> dict
 
 def _refresh_cache_after_calendar_action(user_id: str | None, timezone: str, response_mode: str, status: str) -> None:
     if not user_id:
+        logger.info("cache.refresh_after_action.skip reason=missing_user_id response_mode=%s status=%s", response_mode, status)
         return
     if response_mode != "calendar_action":
+        logger.info(
+            "cache.refresh_after_action.skip reason=non_action_mode user_id=%s response_mode=%s status=%s",
+            user_id,
+            response_mode,
+            status,
+        )
         return
     if status not in {"created", "updated", "cancelled"}:
+        logger.info(
+            "cache.refresh_after_action.skip reason=status_not_mutating user_id=%s response_mode=%s status=%s",
+            user_id,
+            response_mode,
+            status,
+        )
         return
     try:
         cache_result = event_cache.prime_user_window(user_id=user_id, timezone=timezone)
@@ -108,7 +121,16 @@ def health() -> dict[str, str]:
 
 @app.post("/calendar/cache/prime", response_model=CalendarCachePrimeResponse)
 def prime_calendar_cache(payload: CalendarCachePrimeRequest) -> CalendarCachePrimeResponse:
+    logger.info("cache.prime_api.start user_id=%s timezone=%s", payload.user_id, payload.timezone)
     result = event_cache.prime_user_window(user_id=payload.user_id, timezone=payload.timezone)
+    logger.info(
+        "cache.prime_api.done user_id=%s timezone=%s today_count=%s tomorrow_count=%s total=%s",
+        payload.user_id,
+        payload.timezone,
+        result.get("today_count"),
+        result.get("tomorrow_count"),
+        result.get("total_count"),
+    )
     return CalendarCachePrimeResponse(
         status=str(result.get("status", "ok")),
         today_count=int(result.get("today_count", 0)),

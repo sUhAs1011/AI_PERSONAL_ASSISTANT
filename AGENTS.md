@@ -298,3 +298,18 @@ npm run build
   - updated `tests/graph/test_tool_result_node.py`,
   - updated `tests/graph/test_finalizer_modes.py`,
   - updated `tests/api/test_hitl_rebook.py`.
+
+## Recent Deterministic Booking Conflict Guard
+- `app/tools/calendar_proxy.py` `book_event` now performs deterministic overlap checks before create:
+  - resolves requested start/end window,
+  - queries existing events in requested slot,
+  - blocks creation on overlap with `status=conflict` and `error_code=time_conflict`.
+- On conflict, `book_event` now returns structured conflict metadata:
+  - `conflicting_event` (id/title/start/end),
+  - `alternatives` generated from free/busy windows for the day,
+  - grounded summary text.
+- Existing graph conflict routing (`status=conflict` -> `hitl`) now applies to direct `book_event` conflicts as well.
+- Prompt guidance in `app/llm/prompts.py` now reinforces conflict-aware behavior for specific-time booking requests.
+- Added regression tests:
+  - `tests/tools/test_calendar_proxy_coercion.py` (conflict path blocks create + returns alternatives),
+  - `tests/graph/test_tool_result_node.py` (book_event conflict alternatives preserved for HITL).

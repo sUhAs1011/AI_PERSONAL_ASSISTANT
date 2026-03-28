@@ -319,6 +319,13 @@ def agent_node(state: dict) -> dict:
                     **cached_query_result,
                 },
             }
+        logger.info(
+            "agent.query_cache_miss trace_id=%s user_id=%s reason=no_cached_result message=%r has_marker_event=%s",
+            trace_id,
+            state.get("user_id"),
+            latest_user_message[:160],
+            bool(marker_event_id),
+        )
 
     mode_tools = (
         calendar_query_tools

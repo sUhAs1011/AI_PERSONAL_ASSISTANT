@@ -181,3 +181,59 @@ def test_book_event_explicit_location_is_sent_to_create_event():
         args for name, args in captured_calls if name == "mcp_google_calendar_create_event"
     )
     assert create_event_call["location"] == "PlanB: Indiranagar"
+
+
+def test_book_event_returns_conflict_when_time_overlaps_existing_event():
+    captured_calls: list[tuple[str, dict]] = []
+
+    class FakeClient:
+        def call_tool(self, tool_name: str, arguments: dict) -> dict:
+            captured_calls.append((tool_name, arguments))
+            if tool_name == "mcp_google_calendar_find_events":
+                return {
+                    "events": [
+                        {
+                            "id": "evt_busy",
+                            "summary": "Meditation Session",
+                            "start": {"dateTime": "2026-03-28T15:00:00+05:30"},
+                            "end": {"dateTime": "2026-03-28T15:30:00+05:30"},
+                        }
+                    ]
+                }
+            if tool_name == "mcp_google_calendar_query_free_busy":
+                return {
+                    "free_windows": [
+                        {
+                            "start_iso": "2026-03-28T16:00:00+05:30",
+                            "end_iso": "2026-03-28T18:00:00+05:30",
+                        }
+                    ]
+                }
+            if tool_name == "mcp_google_calendar_create_event":
+                raise AssertionError("create_event must not be called when conflict is detected")
+            raise AssertionError(f"Unexpected tool: {tool_name}")
+
+    calendar_proxy._client = lambda: FakeClient()
+
+    result = calendar_proxy.book_event.invoke(
+        {
+            "title": "Casual Call",
+            "start_iso": "2026-03-28T15:00:00+05:30",
+            "duration_minutes": 30,
+            "attendees": [],
+            "send_invites": False,
+            "add_meet_link": False,
+            "user_id": "u1",
+            "timezone": "Asia/Kolkata",
+        }
+    )
+
+    assert result["status"] == "conflict"
+    assert result["error_code"] == "time_conflict"
+    assert result["conflicting_event"]["id"] == "evt_busy"
+    assert result["alternatives"]
+    assert result["alternatives"][0]["start_iso"] == "2026-03-28T16:00:00+05:30"
+    called_tools = [name for name, _ in captured_calls]
+    assert "mcp_google_calendar_find_events" in called_tools
+    assert "mcp_google_calendar_query_free_busy" in called_tools
+    assert "mcp_google_calendar_create_event" not in called_tools

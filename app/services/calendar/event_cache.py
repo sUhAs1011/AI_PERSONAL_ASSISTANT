@@ -111,6 +111,13 @@ class EventCacheService:
         today_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
         tomorrow_start = today_start + timedelta(days=1)
         day_after_tomorrow_start = today_start + timedelta(days=2)
+        logger.info(
+            "event_cache.prime.start user_id=%s timezone=%s window_start=%s window_end=%s",
+            user_id,
+            timezone,
+            today_start.isoformat(),
+            day_after_tomorrow_start.isoformat(),
+        )
 
         events = self._fetch_events(
             user_id,
@@ -141,6 +148,15 @@ class EventCacheService:
 
         today_count = len(events_by_day[today_start.date().isoformat()])
         tomorrow_count = len(events_by_day[tomorrow_start.date().isoformat()])
+        logger.info(
+            "event_cache.prime.done user_id=%s timezone=%s fetched=%s today_count=%s tomorrow_count=%s total=%s",
+            user_id,
+            timezone,
+            len(events),
+            today_count,
+            tomorrow_count,
+            today_count + tomorrow_count,
+        )
         return {
             "status": "ok",
             "today_count": today_count,
@@ -160,7 +176,16 @@ class EventCacheService:
             entry = self._store.get(user_id, {})
             events_by_day = entry.get("events_by_day", {}) if isinstance(entry, dict) else {}
             events = events_by_day.get(target_date, []) if isinstance(events_by_day, dict) else []
-            return [self._public_event_copy(event) for event in events]
+            out = [self._public_event_copy(event) for event in events]
+            logger.info(
+                "event_cache.day_events user_id=%s timezone=%s day_label=%s date=%s count=%s",
+                user_id,
+                timezone,
+                day_label,
+                target_date,
+                len(out),
+            )
+            return out
 
     def resolve_event_id(
         self,
@@ -172,6 +197,13 @@ class EventCacheService:
         self._ensure_user_window(user_id=user_id, timezone=timezone)
         normalized_ref = _normalize_text(event_ref_or_hint)
         hinted_start = _parse_iso_datetime(start_iso_hint, timezone) if start_iso_hint else None
+        logger.info(
+            "event_cache.resolve_id.start user_id=%s timezone=%s has_start_hint=%s ref=%r",
+            user_id,
+            timezone,
+            hinted_start is not None,
+            event_ref_or_hint,
+        )
 
         with self._lock:
             entry = self._store.get(user_id, {})
@@ -185,11 +217,22 @@ class EventCacheService:
             hinted_iso = hinted_start.isoformat()
             for event in candidates:
                 if event.get("start_iso") == hinted_iso and normalized_ref in event.get("aliases", set()):
+                    logger.info(
+                        "event_cache.resolve_id.hit user_id=%s strategy=start+alias resolved_event_id=%s",
+                        user_id,
+                        event.get("id"),
+                    )
                     return event.get("id")
 
         for event in candidates:
             if normalized_ref in event.get("aliases", set()):
+                logger.info(
+                    "event_cache.resolve_id.hit user_id=%s strategy=alias resolved_event_id=%s",
+                    user_id,
+                    event.get("id"),
+                )
                 return event.get("id")
+        logger.info("event_cache.resolve_id.miss user_id=%s ref=%r", user_id, event_ref_or_hint)
         return None
 
     def get_event_by_reference(
@@ -200,11 +243,19 @@ class EventCacheService:
         start_iso_hint: str | None = None,
     ) -> dict | None:
         if not isinstance(event_ref_or_hint, str) or not event_ref_or_hint.strip():
+            logger.info("event_cache.lookup.skip user_id=%s reason=empty_reference", user_id)
             return None
 
         self._ensure_user_window(user_id=user_id, timezone=timezone)
         normalized_ref = _normalize_text(event_ref_or_hint)
         hinted_start = _parse_iso_datetime(start_iso_hint, timezone) if start_iso_hint else None
+        logger.info(
+            "event_cache.lookup.start user_id=%s timezone=%s has_start_hint=%s ref=%r",
+            user_id,
+            timezone,
+            hinted_start is not None,
+            event_ref_or_hint,
+        )
 
         with self._lock:
             entry = self._store.get(user_id, {})
@@ -222,11 +273,22 @@ class EventCacheService:
             hinted_iso = hinted_start.isoformat()
             for event in candidates:
                 if event.get("start_iso") == hinted_iso and _matches(event):
+                    logger.info(
+                        "event_cache.lookup.hit user_id=%s strategy=start+ref event_id=%s",
+                        user_id,
+                        event.get("id"),
+                    )
                     return self._public_event_copy(event)
 
         for event in candidates:
             if _matches(event):
+                logger.info(
+                    "event_cache.lookup.hit user_id=%s strategy=ref event_id=%s",
+                    user_id,
+                    event.get("id"),
+                )
                 return self._public_event_copy(event)
+        logger.info("event_cache.lookup.miss user_id=%s ref=%r", user_id, event_ref_or_hint)
         return None
 
     def query_today_tomorrow(
@@ -238,9 +300,11 @@ class EventCacheService:
     ) -> dict | None:
         lowered = (user_message or "").lower().strip()
         if not lowered:
+            logger.info("event_cache.query.skip user_id=%s reason=empty_message", user_id)
             return None
 
         if _contains_hint(lowered, _OUT_OF_WINDOW_HINTS):
+            logger.info("event_cache.query.skip user_id=%s reason=out_of_window_hint message=%r", user_id, user_message)
             return None
 
         day_label = "tomorrow" if "tomorrow" in lowered else "today"
@@ -248,12 +312,26 @@ class EventCacheService:
             if "tomorrow" not in lowered and not (
                 _contains_hint(lowered, _LOCATION_HINTS) or _contains_hint(lowered, _DURATION_HINTS)
             ):
+                logger.info("event_cache.query.skip user_id=%s reason=no_day_or_supported_hint message=%r", user_id, user_message)
                 return None
 
+        asked_location = _contains_hint(lowered, _LOCATION_HINTS)
+        asked_duration = _contains_hint(lowered, _DURATION_HINTS)
+        intent = "location" if asked_location else ("duration" if asked_duration else "day_list")
+        logger.info(
+            "event_cache.query.start user_id=%s timezone=%s day_label=%s intent=%s has_event_hint=%s",
+            user_id,
+            timezone,
+            day_label,
+            intent,
+            bool(event_id_hint),
+        )
+
         events = self.get_events_for_day(user_id=user_id, timezone=timezone, day_label=day_label)
-        if _contains_hint(lowered, _LOCATION_HINTS):
+        if asked_location:
             matched = self._match_event(events=events, event_id_hint=event_id_hint, title_hint=_extract_title_hint(lowered))
             if matched is None:
+                logger.info("event_cache.query.miss user_id=%s day_label=%s intent=location", user_id, day_label)
                 return {
                     "status": "not_found",
                     "summary": "I couldn't find that event in your cached schedule.",
@@ -265,6 +343,13 @@ class EventCacheService:
                 summary = f"Your {title} is at {location}."
             else:
                 summary = f"I found {title}, but it doesn't have a location set yet."
+            logger.info(
+                "event_cache.query.hit user_id=%s day_label=%s intent=location event_title=%r location_set=%s",
+                user_id,
+                day_label,
+                title,
+                bool(location),
+            )
             return {
                 "status": "ok",
                 "title": title,
@@ -275,9 +360,10 @@ class EventCacheService:
                 "day_label": day_label,
             }
 
-        if _contains_hint(lowered, _DURATION_HINTS):
+        if asked_duration:
             matched = self._match_event(events=events, event_id_hint=event_id_hint, title_hint=_extract_title_hint(lowered))
             if matched is None:
+                logger.info("event_cache.query.miss user_id=%s day_label=%s intent=duration", user_id, day_label)
                 return {
                     "status": "not_found",
                     "summary": "I couldn't find that event in your cached schedule.",
@@ -294,6 +380,13 @@ class EventCacheService:
                     "summary": f"I found {title}, but couldn't read its duration from cache.",
                 }
             duration_minutes = int((end_dt - start_dt).total_seconds() // 60)
+            logger.info(
+                "event_cache.query.hit user_id=%s day_label=%s intent=duration event_title=%r duration_minutes=%s",
+                user_id,
+                day_label,
+                title,
+                duration_minutes,
+            )
             return {
                 "status": "ok",
                 "title": title,
@@ -304,6 +397,12 @@ class EventCacheService:
                 "day_label": day_label,
             }
 
+        logger.info(
+            "event_cache.query.hit user_id=%s day_label=%s intent=day_list events=%s",
+            user_id,
+            day_label,
+            len(events),
+        )
         return {
             "status": "ok",
             "events": events,
@@ -314,32 +413,51 @@ class EventCacheService:
     def _ensure_user_window(self, user_id: str, timezone: str) -> None:
         with self._lock:
             entry = self._store.get(user_id)
-        if self._is_entry_fresh(entry=entry, timezone=timezone):
+        freshness_reason = self._entry_freshness_reason(entry=entry, timezone=timezone)
+        if freshness_reason == "fresh":
+            logger.info("event_cache.ensure.hit user_id=%s timezone=%s", user_id, timezone)
             return
+        logger.info(
+            "event_cache.ensure.miss user_id=%s timezone=%s reason=%s",
+            user_id,
+            timezone,
+            freshness_reason,
+        )
         try:
-            self.prime_user_window(user_id=user_id, timezone=timezone)
+            result = self.prime_user_window(user_id=user_id, timezone=timezone)
+            logger.info(
+                "event_cache.ensure.reprimed user_id=%s timezone=%s total=%s",
+                user_id,
+                timezone,
+                result.get("total_count"),
+            )
         except Exception:
             logger.exception("event_cache.prime_failed user_id=%s timezone=%s", user_id, timezone)
 
     def _is_entry_fresh(self, entry: dict | None, timezone: str) -> bool:
+        return self._entry_freshness_reason(entry=entry, timezone=timezone) == "fresh"
+
+    def _entry_freshness_reason(self, entry: dict | None, timezone: str) -> str:
         if not isinstance(entry, dict):
-            return False
+            return "missing"
         if entry.get("timezone") != timezone:
-            return False
+            return "timezone_mismatch"
         fetched_at = entry.get("fetched_at")
         if not isinstance(fetched_at, datetime):
-            return False
+            return "missing_fetched_at"
         age_seconds = (datetime.now(ZoneInfo("UTC")) - fetched_at).total_seconds()
         if age_seconds > self._ttl_seconds:
-            return False
+            return "expired"
 
         now_local = self._now_fn(timezone)
         today_iso = now_local.date().isoformat()
         tomorrow_iso = (now_local.date() + timedelta(days=1)).isoformat()
         events_by_day = entry.get("events_by_day", {})
         if not isinstance(events_by_day, dict):
-            return False
-        return today_iso in events_by_day and tomorrow_iso in events_by_day
+            return "invalid_events_by_day"
+        if today_iso not in events_by_day or tomorrow_iso not in events_by_day:
+            return "missing_day_bucket"
+        return "fresh"
 
     def _normalize_event(self, user_id: str, event: dict, timezone: str) -> dict | None:
         start_iso_raw, end_iso_raw = _extract_start_end_iso(event)
