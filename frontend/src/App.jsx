@@ -299,7 +299,7 @@ const ChatPage = ({ messages, setMessages, conversationHistory, setConversationH
               handleSend()
             }
           }}
-          placeholder={isListening ? "Listening..." : "Message SmartOwner AI..."}
+          placeholder={isListening ? "Listening..." : "Message Lumina..."}
           className="flex-1 bg-transparent border-none outline-none text-base font-medium"
         />
         <button
@@ -339,7 +339,7 @@ const DashboardPage = () => {
       start.setHours(0, 0, 0, 0)
       const end = new Date(date)
       end.setHours(23, 59, 59, 999)
-      
+
       const payload = await getEvents(userId, start.toISOString(), end.toISOString())
       setEvents(payload.events || [])
     } catch {
@@ -377,50 +377,50 @@ const DashboardPage = () => {
           </button>
         </div>
       </div>
-      
+
       <div className="premium-card p-6 min-h-[500px] relative overflow-hidden bg-white">
         {isLoading && (
           <div className="absolute inset-0 bg-white/50 backdrop-blur-sm z-10 flex items-center justify-center">
-             <div className="w-10 h-10 border-4 border-brand border-t-transparent rounded-full animate-spin shadow-xl"></div>
+            <div className="w-10 h-10 border-4 border-brand border-t-transparent rounded-full animate-spin shadow-xl"></div>
           </div>
         )}
         {error && <p className="text-red-500 font-bold mb-4">{error}</p>}
-        
+
         <div className="space-y-4 relative z-0">
-           {events.length === 0 && !isLoading && !error && (
-             <div className="text-center py-32 text-slate-400 font-bold text-lg">No events scheduled. Enjoy your free time! 🎉</div>
-           )}
-           {events.map((ev, i) => {
-              const startIso = ev.start?.dateTime || ev.start?.date || ev.start_iso
-              const endIso = ev.end?.dateTime || ev.end?.date || ev.end_iso
-              const start = new Date(startIso || Date.now())
-              const end = new Date(endIso || Date.now())
-              const timeStr = `${start.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} - ${end.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`
-              const hasMeet = !!ev.meet_link || !!ev.hangoutLink
-              const meetUrl = ev.meet_link || ev.hangoutLink
-              const title = ev.title || ev.summary || "Untitled Event"
-              
-              return (
-                <motion.div 
-                  key={ev.id || i}
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="flex bg-brand/5 border-l-4 border-brand rounded-2xl p-6 hover:-translate-y-1 hover:shadow-lg transition-all"
-                >
-                  <div className="flex-1">
-                    <h4 className="font-primary font-black text-slate-900 text-xl tracking-tight">{title}</h4>
-                    <p className="text-sm text-slate-500 mt-2 font-bold flex items-center gap-2"><Clock size={16} />{timeStr}</p>
+          {events.length === 0 && !isLoading && !error && (
+            <div className="text-center py-32 text-slate-400 font-bold text-lg">No events scheduled. Enjoy your free time! 🎉</div>
+          )}
+          {events.map((ev, i) => {
+            const startIso = ev.start?.dateTime || ev.start?.date || ev.start_iso
+            const endIso = ev.end?.dateTime || ev.end?.date || ev.end_iso
+            const start = new Date(startIso || Date.now())
+            const end = new Date(endIso || Date.now())
+            const timeStr = `${start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - ${end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+            const hasMeet = !!ev.meet_link || !!ev.hangoutLink
+            const meetUrl = ev.meet_link || ev.hangoutLink
+            const title = ev.title || ev.summary || "Untitled Event"
+
+            return (
+              <motion.div
+                key={ev.id || i}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="flex bg-brand/5 border-l-4 border-brand rounded-2xl p-6 hover:-translate-y-1 hover:shadow-lg transition-all"
+              >
+                <div className="flex-1">
+                  <h4 className="font-primary font-black text-slate-900 text-xl tracking-tight">{title}</h4>
+                  <p className="text-sm text-slate-500 mt-2 font-bold flex items-center gap-2"><Clock size={16} />{timeStr}</p>
+                </div>
+                {hasMeet && (
+                  <div className="flex items-center shrink-0">
+                    <a href={meetUrl} target="_blank" rel="noreferrer" className="flex items-center gap-2 bg-white text-brand px-5 py-3 rounded-xl shadow-sm text-sm font-black hover:bg-brand hover:text-white transition-colors">
+                      Join Call <Zap size={16} fill="currentColor" />
+                    </a>
                   </div>
-                  {hasMeet && (
-                    <div className="flex items-center shrink-0">
-                      <a href={meetUrl} target="_blank" rel="noreferrer" className="flex items-center gap-2 bg-white text-brand px-5 py-3 rounded-xl shadow-sm text-sm font-black hover:bg-brand hover:text-white transition-colors">
-                        Join Call <Zap size={16} fill="currentColor" />
-                      </a>
-                    </div>
-                  )}
-                </motion.div>
-              )
-           })}
+                )}
+              </motion.div>
+            )
+          })}
         </div>
       </div>
     </div>
@@ -500,7 +500,7 @@ function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(() => localStorage.getItem('auth_token') === 'logged_in')
   const [activeTab, setActiveTab] = useState('chat')
   const [chatMessages, setChatMessages] = useState([
-    { type: 'ai', content: 'I can help you book, reschedule, or check availability. Try: "Book a design review tomorrow at 3 PM with alex@example.com".' }
+    { type: 'ai', content: "Good morning. I'm connected to your schedule. Just let me know if you need to set up a sync, check your availability, or clear some space on your calendar." }
   ])
   const [chatHistory, setChatHistory] = useState([])
 
@@ -530,8 +530,8 @@ function App() {
             <Zap size={28} fill="currentColor" />
           </motion.div>
           <div className="hidden lg:block">
-            <h1 className="text-xl font-black text-slate-900 leading-none tracking-tighter">SmartOwner</h1>
-            <p className="text-[10px] font-black text-brand uppercase tracking-[0.4em] mt-1">Intelligence</p>
+            <h1 className="text-xl font-black text-slate-900 leading-none tracking-tighter">Lumina</h1>
+            <p className="text-[10px] font-black text-brand uppercase tracking-[0.4em] mt-1">AI Personal Assistant</p>
           </div>
         </div>
 
