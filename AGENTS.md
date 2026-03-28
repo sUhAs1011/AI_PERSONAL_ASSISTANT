@@ -192,3 +192,22 @@ npm run build
 - Added regression tests:
 - `tests/tools/test_calendar_proxy_coercion.py` (non-email tokens infer location; explicit location passthrough),
 - `tests/services/test_mcp_client_compat.py` (create fallback includes location).
+
+## Recent Duration Query + Tool-Use Failure Resilience
+- Added `get_event_duration` proxy tool in `app/tools/calendar_proxy.py`:
+- searches events in a date range via MCP `find_events`,
+- matches by title hint,
+- computes duration from start/end, and returns a query-ready summary payload.
+- `app/graph/nodes/agent_node.py` now uses mode-specific tool sets:
+- `calendar_query` binds query-focused tools (`find_events`, `check_availability`, `get_event_duration`),
+- `calendar_action` binds action-capable tools.
+- On `tool_use_failed`, agent fallback now:
+- preserves the original route mode (no forced `calendar_action`),
+- emits mode-specific clarification text,
+- logs Groq `failed_generation` for faster debugging.
+- `app/graph/nodes/tool_result_node.py` now normalizes `get_event_duration` output into `execution_result` for finalizer consumption.
+- `app/llm/prompts.py` now explicitly instructs duration follow-up questions to use `get_event_duration`.
+- Added regression tests:
+- `tests/tools/test_event_duration_tool.py`,
+- updated `tests/graph/test_agent_tool_use_failure.py`,
+- updated `tests/graph/test_tool_result_node.py`.

@@ -1,7 +1,7 @@
 import os
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from langchain_core.tools import tool
@@ -29,6 +29,10 @@ def _format_window(window: dict) -> str:
     return f"{start_s}-{end_s} on {start_dt.strftime('%A')}"
 
 
+def _format_clock(dt: datetime) -> str:
+    return dt.strftime("%I:%M %p").lstrip("0")
+
+
 def _parse_iso_datetime(value: str) -> datetime | None:
     text = (value or "").strip()
     if not text:
@@ -39,6 +43,22 @@ def _parse_iso_datetime(value: str) -> datetime | None:
         return datetime.fromisoformat(text)
     except ValueError:
         return None
+
+
+def _parse_event_datetime(value: str | None, timezone: str) -> datetime | None:
+    if not value:
+        return None
+    if len(value) == 10 and value.count("-") == 2:
+        try:
+            return datetime.fromisoformat(value).replace(tzinfo=ZoneInfo(timezone))
+        except ValueError:
+            return None
+    parsed = _parse_iso_datetime(value)
+    if parsed is None:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=ZoneInfo(timezone))
+    return parsed.astimezone(ZoneInfo(timezone))
 
 
 def _normalize_start_iso(value: str, timezone: str) -> str:
@@ -70,6 +90,62 @@ def _partition_attendees(attendees: list[str]) -> tuple[list[str], list[str], li
         else:
             non_email_tokens.append(token)
     return valid_emails, invalid_email_like, non_email_tokens
+
+
+def _resolve_duration_range(date_range: str, timezone: str) -> tuple[str, str]:
+    now = datetime.now(ZoneInfo(timezone))
+    normalized = (date_range or "today").strip().lower()
+    if normalized == "today":
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        end = start + timedelta(days=1)
+        return start.isoformat(), end.isoformat()
+    if normalized == "tomorrow":
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+        end = start + timedelta(days=1)
+        return start.isoformat(), end.isoformat()
+    return resolve_date_range(date_range, timezone)
+
+
+def _normalize_text(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+
+
+def _pick_best_event(events: list[dict], title_hint: str) -> dict | None:
+    if not events:
+        return None
+    hint = _normalize_text(title_hint)
+    if not hint:
+        return events[0]
+    hint_tokens = set(hint.split())
+    best: tuple[int, dict] | None = None
+    for event in events:
+        title = str(event.get("summary") or event.get("title") or "")
+        title_norm = _normalize_text(title)
+        title_tokens = set(title_norm.split())
+        score = 0
+        if title_norm and hint in title_norm:
+            score += 5
+        overlap = len(hint_tokens & title_tokens)
+        score += overlap
+        if best is None or score > best[0]:
+            best = (score, event)
+    if best is None or best[0] <= 0:
+        return None
+    return best[1]
+
+
+def _event_start_end(event: dict, timezone: str) -> tuple[datetime | None, datetime | None]:
+    start_obj = event.get("start", {}) if isinstance(event.get("start"), dict) else {}
+    end_obj = event.get("end", {}) if isinstance(event.get("end"), dict) else {}
+    start = _parse_event_datetime(
+        start_obj.get("dateTime") or start_obj.get("date") or event.get("start_iso"),
+        timezone,
+    )
+    end = _parse_event_datetime(
+        end_obj.get("dateTime") or end_obj.get("date") or event.get("end_iso"),
+        timezone,
+    )
+    return start, end
 
 
 @tool
@@ -113,6 +189,66 @@ def find_events(user_id: str, start_iso: str, end_iso: str) -> dict:
     events = raw.get("events") if isinstance(raw, dict) else []
     logger.info("tool.find_events.end user_id=%s events=%s", user_id, len(events or []))
     return {"events": events or []}
+
+
+@tool
+def get_event_duration(
+    user_id: str,
+    timezone: str,
+    title_hint: str,
+    date_range: str = "today",
+) -> dict:
+    """Get duration details for a named event by searching events in a date range and computing minutes from start/end."""
+    logger.info(
+        "tool.get_event_duration.start user_id=%s title_hint=%r date_range=%r timezone=%s",
+        user_id,
+        title_hint,
+        date_range,
+        timezone,
+    )
+    start_iso, end_iso = _resolve_duration_range(date_range=date_range, timezone=timezone)
+    raw = _client().call_tool(
+        "mcp_google_calendar_find_events",
+        {"user_id": user_id, "start_iso": start_iso, "end_iso": end_iso},
+    )
+    events = raw.get("events", []) if isinstance(raw, dict) else []
+    match = _pick_best_event(events=events, title_hint=title_hint)
+    if match is None:
+        logger.info("tool.get_event_duration.not_found user_id=%s title_hint=%r", user_id, title_hint)
+        return {
+            "status": "not_found",
+            "title_hint": title_hint,
+            "summary": f"I couldn't find an event matching '{title_hint}' in that time range.",
+        }
+    start, end = _event_start_end(match, timezone=timezone)
+    title = str(match.get("summary") or match.get("title") or "that event")
+    if start is None or end is None or end <= start:
+        logger.warning("tool.get_event_duration.unreadable_event user_id=%s title=%r", user_id, title)
+        return {
+            "status": "error",
+            "error_code": "duration_unavailable",
+            "title": title,
+            "summary": f"I found {title}, but couldn't read its start and end time to calculate duration.",
+        }
+    duration_minutes = int((end - start).total_seconds() // 60)
+    day_label = "today" if start.date() == datetime.now(ZoneInfo(timezone)).date() else start.strftime("%A")
+    summary = (
+        f"Your {title} is {duration_minutes} minutes long, from {_format_clock(start)} to {_format_clock(end)} {day_label}."
+    )
+    logger.info(
+        "tool.get_event_duration.ok user_id=%s title=%r duration_minutes=%s",
+        user_id,
+        title,
+        duration_minutes,
+    )
+    return {
+        "status": "ok",
+        "title": title,
+        "duration_minutes": duration_minutes,
+        "start_iso": start.isoformat(),
+        "end_iso": end.isoformat(),
+        "summary": summary,
+    }
 
 
 @tool

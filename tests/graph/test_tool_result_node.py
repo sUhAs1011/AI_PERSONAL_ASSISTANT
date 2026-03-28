@@ -46,3 +46,29 @@ def test_free_busy_tool_message_populates_execution_result():
     assert result["response_mode"] == "calendar_query"
     assert result["execution_result"]["status"] == "free"
     assert "summary" in result["execution_result"]
+
+
+def test_get_event_duration_tool_message_populates_execution_result():
+    state = {
+        "messages": [
+            ToolMessage(
+                content=json.dumps(
+                    {
+                        "status": "ok",
+                        "summary": "Your Dinner Date is 90 minutes long.",
+                        "title": "Dinner Date",
+                        "duration_minutes": 90,
+                        "start_iso": "2026-03-28T20:00:00+05:30",
+                        "end_iso": "2026-03-28T21:30:00+05:30",
+                    }
+                ),
+                tool_call_id="call_3",
+                name="get_event_duration",
+            )
+        ]
+    }
+    result = tool_result_node(state)
+    assert result["response_mode"] == "calendar_query"
+    assert result["execution_result"]["status"] == "ok"
+    assert result["execution_result"]["duration_minutes"] == 90
+    assert "Dinner Date" in result["execution_result"]["summary"]

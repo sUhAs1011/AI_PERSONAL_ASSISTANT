@@ -12,17 +12,29 @@ from app.tools.calendar_proxy import (
     cancel_event,
     check_availability,
     find_events,
+    get_event_duration,
     reschedule_event,
     schedule_mutual,
 )
 
-proxy_tools = [
+calendar_query_tools = [
+    check_availability,
+    find_events,
+    get_event_duration,
+]
+
+calendar_action_tools = [
     book_event,
     check_availability,
     find_events,
     schedule_mutual,
     cancel_event,
     reschedule_event,
+]
+
+proxy_tools = [
+    *calendar_query_tools,
+    *[tool for tool in calendar_action_tools if tool not in calendar_query_tools],
 ]
 logger = logging.getLogger(__name__)
 
@@ -50,6 +62,14 @@ def _invoke_with_retry(llm, messages: list):
             )
         )
         return llm.invoke([messages[0], repair_hint, *messages[1:]])
+
+
+def _clarification_for_mode(mode: ConversationMode) -> str:
+    if mode == ConversationMode.CALENDAR_QUERY:
+        return "I couldn't fetch that detail yet. Please mention the event name and day, for example: 'duration of dinner date today'."
+    if mode == ConversationMode.CALENDAR_ACTION:
+        return "Please rephrase your request with explicit date, time, and attendees."
+    return "Please rephrase your request."
 
 
 def agent_node(state: dict) -> dict:
@@ -101,7 +121,12 @@ def agent_node(state: dict) -> dict:
             "execution_result": {"status": "ok", "kind": "general_chat"},
         }
 
-    llm = build_llm(bound_tools=proxy_tools)
+    mode_tools = (
+        calendar_query_tools
+        if route.mode == ConversationMode.CALENDAR_QUERY
+        else calendar_action_tools
+    )
+    llm = build_llm(bound_tools=mode_tools)
     system_prompt = render_agent_system_prompt(
         now_iso=datetime.now().astimezone().isoformat(),
         timezone=timezone,
@@ -112,15 +137,29 @@ def agent_node(state: dict) -> dict:
         response = _invoke_with_retry(llm, messages)
     except BadRequestError as exc:
         if _is_tool_use_failed(exc):
-            logger.warning("agent.tool_use_failed trace_id=%s", trace_id)
+            body = getattr(exc, "body", None)
+            failed_generation = None
+            if isinstance(body, dict):
+                err = body.get("error")
+                if isinstance(err, dict):
+                    failed_generation = err.get("failed_generation")
+            logger.warning(
+                "agent.tool_use_failed trace_id=%s mode=%s failed_generation=%r",
+                trace_id,
+                route.mode.value,
+                failed_generation,
+            )
+            clarification = _clarification_for_mode(route.mode)
             return {
                 "iteration_count": state.get("iteration_count", 0) + 1,
-                "pending_clarification": "Please rephrase your request with exact time/date details.",
-                "response_mode": ConversationMode.CALENDAR_ACTION.value,
+                "pending_clarification": clarification,
+                "summary": clarification,
+                "response_mode": route.mode.value,
                 "execution_result": {
                     "status": "error",
                     "error_code": "tool_use_failed",
                     "error": "LLM emitted an invalid tool call format.",
+                    "failed_generation": failed_generation,
                 },
             }
         raise
