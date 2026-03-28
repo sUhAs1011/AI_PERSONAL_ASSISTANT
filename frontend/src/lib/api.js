@@ -39,3 +39,14 @@ export async function putPreferences(userId, prefs) {
   if (!res.ok) throw new Error("Failed to save preferences");
   return res.json();
 }
+
+export async function getEvents(userId, startIso, endIso) {
+  const url = new URL(`${API_BASE}/events`);
+  url.searchParams.append("user_id", userId);
+  url.searchParams.append("start_iso", startIso);
+  url.searchParams.append("end_iso", endIso);
+  
+  const res = await fetch(url.toString());
+  if (!res.ok) throw new Error("Failed to load events");
+  return res.json();
+}

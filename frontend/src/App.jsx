@@ -1,7 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { chat, submitHitlDecision, getPreferences, putPreferences } from './lib/api'
+import { chat, submitHitlDecision, getPreferences, putPreferences, getEvents } from './lib/api'
 import {
+  Calendar,
+  ChevronLeft,
   MessageSquare,
   Settings as SettingsIcon,
   ChevronRight,
@@ -165,7 +167,7 @@ const ChatPage = ({ messages, setMessages, conversationHistory, setConversationH
           { type: 'ai', content: `${safeSummary}${inviteSuffix}${meetSuffix}` },
         ])
       }
-    } catch (err) {
+    } catch {
       setMessages((prev) => [
         ...prev,
         { type: 'ai', content: "I couldn't reach the calendar service right now. Want me to retry?" },
@@ -221,7 +223,7 @@ const ChatPage = ({ messages, setMessages, conversationHistory, setConversationH
                                 ...prev,
                                 { type: 'ai', content: result.summary || `Rescheduled to ${alt.start_iso}` },
                               ])
-                            } catch (_err) {
+                            } catch {
                               setMessages((prev) => [
                                 ...prev,
                                 { type: 'ai', content: 'Failed to submit HITL decision.' },
@@ -321,6 +323,110 @@ const ChatPage = ({ messages, setMessages, conversationHistory, setConversationH
   )
 }
 
+// --- DASHBOARD PAGE ---
+const DashboardPage = () => {
+  const userId = 'u1'
+  const [selectedDate, setSelectedDate] = useState(new Date())
+  const [events, setEvents] = useState([])
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  const fetchEvents = async (date) => {
+    setIsLoading(true)
+    setError('')
+    try {
+      const start = new Date(date)
+      start.setHours(0, 0, 0, 0)
+      const end = new Date(date)
+      end.setHours(23, 59, 59, 999)
+      
+      const payload = await getEvents(userId, start.toISOString(), end.toISOString())
+      setEvents(payload.events || [])
+    } catch {
+      setError('Failed to load events')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    fetchEvents(selectedDate)
+  }, [selectedDate])
+
+  const nextDay = () => setSelectedDate(new Date(selectedDate.getTime() + 86400000))
+  const prevDay = () => setSelectedDate(new Date(selectedDate.getTime() - 86400000))
+  const goToday = () => setSelectedDate(new Date())
+
+  return (
+    <div className="animate-in fade-in slide-in-from-right-4 duration-500">
+      <div className="flex flex-col items-center justify-center mb-10">
+        <div className="flex items-center gap-6">
+          <button onClick={prevDay} className="w-12 h-12 flex items-center justify-center rounded-2xl bg-white shadow-sm hover:shadow-md border border-slate-100 text-slate-400 hover:text-brand transition-all hover:-translate-x-1">
+            <ChevronLeft size={24} />
+          </button>
+          <div className="text-center min-w-[280px]">
+            <h2 className="text-4xl font-black text-slate-900 tracking-tight mb-2">
+              {selectedDate.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
+            </h2>
+            <button onClick={goToday} className="text-[13px] font-bold text-slate-400 uppercase tracking-widest hover:text-brand transition-colors">
+              • Jump to Today •
+            </button>
+          </div>
+          <button onClick={nextDay} className="w-12 h-12 flex items-center justify-center rounded-2xl bg-white shadow-sm hover:shadow-md border border-slate-100 text-slate-400 hover:text-brand transition-all hover:translate-x-1">
+            <ChevronRight size={24} />
+          </button>
+        </div>
+      </div>
+      
+      <div className="premium-card p-6 min-h-[500px] relative overflow-hidden bg-white">
+        {isLoading && (
+          <div className="absolute inset-0 bg-white/50 backdrop-blur-sm z-10 flex items-center justify-center">
+             <div className="w-10 h-10 border-4 border-brand border-t-transparent rounded-full animate-spin shadow-xl"></div>
+          </div>
+        )}
+        {error && <p className="text-red-500 font-bold mb-4">{error}</p>}
+        
+        <div className="space-y-4 relative z-0">
+           {events.length === 0 && !isLoading && !error && (
+             <div className="text-center py-32 text-slate-400 font-bold text-lg">No events scheduled. Enjoy your free time! 🎉</div>
+           )}
+           {events.map((ev, i) => {
+              const startIso = ev.start?.dateTime || ev.start?.date || ev.start_iso
+              const endIso = ev.end?.dateTime || ev.end?.date || ev.end_iso
+              const start = new Date(startIso || Date.now())
+              const end = new Date(endIso || Date.now())
+              const timeStr = `${start.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} - ${end.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`
+              const hasMeet = !!ev.meet_link || !!ev.hangoutLink
+              const meetUrl = ev.meet_link || ev.hangoutLink
+              const title = ev.title || ev.summary || "Untitled Event"
+              
+              return (
+                <motion.div 
+                  key={ev.id || i}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="flex bg-brand/5 border-l-4 border-brand rounded-2xl p-6 hover:-translate-y-1 hover:shadow-lg transition-all"
+                >
+                  <div className="flex-1">
+                    <h4 className="font-primary font-black text-slate-900 text-xl tracking-tight">{title}</h4>
+                    <p className="text-sm text-slate-500 mt-2 font-bold flex items-center gap-2"><Clock size={16} />{timeStr}</p>
+                  </div>
+                  {hasMeet && (
+                    <div className="flex items-center shrink-0">
+                      <a href={meetUrl} target="_blank" rel="noreferrer" className="flex items-center gap-2 bg-white text-brand px-5 py-3 rounded-xl shadow-sm text-sm font-black hover:bg-brand hover:text-white transition-colors">
+                        Join Call <Zap size={16} fill="currentColor" />
+                      </a>
+                    </div>
+                  )}
+                </motion.div>
+              )
+           })}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // --- PREFERENCES PAGE ---
 const PreferencesPage = () => {
   const userId = 'u1'
@@ -334,7 +440,7 @@ const PreferencesPage = () => {
         if (typeof prefs.no_meetings_before_hour === 'number') {
           setNoMeetingsBeforeHour(prefs.no_meetings_before_hour)
         }
-      } catch (_err) {
+      } catch {
         setPrefStatus('Failed to load preferences')
       }
     }
@@ -345,7 +451,7 @@ const PreferencesPage = () => {
     try {
       await putPreferences(userId, { no_meetings_before_hour: noMeetingsBeforeHour })
       setPrefStatus('Preferences saved')
-    } catch (_err) {
+    } catch {
       setPrefStatus('Failed to save preferences')
     }
   }
@@ -432,6 +538,7 @@ function App() {
         <nav className="flex-1 w-full space-y-4">
           {[
             { id: 'chat', label: 'Chat Assistant', icon: MessageSquare },
+            { id: 'schedule', label: 'My Schedule', icon: Calendar },
             { id: 'settings', label: 'Preferences', icon: SettingsIcon },
           ].map((item) => (
             <button
@@ -500,6 +607,7 @@ function App() {
             transition={{ duration: 0.3 }}
           >
             {activeTab === 'settings' && <PreferencesPage />}
+            {activeTab === 'schedule' && <DashboardPage />}
             {activeTab === 'chat' && <ChatPage messages={chatMessages} setMessages={setChatMessages} conversationHistory={chatHistory} setConversationHistory={setChatHistory} />}
           </motion.div>
         </AnimatePresence>

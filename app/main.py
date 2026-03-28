@@ -231,6 +231,20 @@ def respond_hitl(payload: HitlResponse) -> ChatResponse:
     )
 
 
+# ...
+@app.get("/events")
+def get_events(user_id: str, start_iso: str, end_iso: str) -> dict:
+    from app.tools.calendar_proxy import _client
+
+    logger.info("api.get_events user_id=%s start_iso=%s end_iso=%s", user_id, start_iso, end_iso)
+    raw = _client().call_tool(
+        "mcp_google_calendar_find_events",
+        {"user_id": user_id, "start_iso": start_iso, "end_iso": end_iso},
+    )
+    events = raw.get("events", []) if isinstance(raw, dict) else []
+    return {"events": events}
+
+
 @app.get("/preferences/{user_id}")
 def get_preferences(user_id: str) -> dict:
     return preferences_repo.get_preferences(user_id)
