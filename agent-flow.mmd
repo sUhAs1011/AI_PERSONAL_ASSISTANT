@@ -20,12 +20,16 @@ flowchart LR
     end
 
     CHAT --> S
-    END --> CRES["/chat ChatResponse<br/>status + summary + response_mode<br/>latest_event_id/latest_start_iso<br/>optional hitl_action_id + alternatives"]
+    END --> CRES["/chat ChatResponse<br/>status + summary + response_mode<br/>latest_event_id/latest_start_iso<br/>conflict mode: conversational summary (IST options)"]
     CRES --> CR["refresh cache after action<br/>status in created/updated/cancelled"]
 
-    CRES -->|if conflict options shown| UH["User selects option"] --> HITL["/hitl/respond"]
-    HITL --> RH["resolve_hitl_action<br/>(execution_result only)"] --> HF["finalizer_node"] --> HRES["/hitl/respond ChatResponse<br/>same finalizer contract"]
+    CRES -->|if conflict summary shown| UH["User replies preferred time in chat"] --> CH["/chat hitl follow-up<br/>resolve marker + parse time + retry book_event"]
+    CH -->|still conflict| H["hitl_node (new marker + IST options)"]
+    CH -->|created / updated / cancelled / error| HF["finalizer_node"] --> HRES["/chat ChatResponse<br/>same finalizer contract"]
     HRES --> CR
+
+    CRES -.legacy/manual.-> HITL["/hitl/respond"]
+    HITL --> RH["resolve_hitl_action<br/>(execution_result only)"] --> HF
 
     subgraph T["Calendar Tools (via ToolNode)"]
       direction TB

@@ -333,3 +333,16 @@ npm run build
 - When hint resolution fails, `reschedule_event` now returns structured `event_not_found` errors instead of generic raw exceptions.
 - Added regression tests:
   - `tests/tools/test_reschedule_event_tool.py`.
+
+## Recent Conversational Conflict HITL Update
+- `/chat` now keeps conflict handling conversational (no UI-oriented HITL payload requirement for clients):
+  - conflict summaries are generated in natural language with IST-formatted free-slot options,
+  - `/chat` masks `hitl_action_id` and `alternatives` when `status=needs_hitl`.
+- Pending conflict context is retained using assistant history markers (`[hitl_action_id=...]`) so follow-up replies can be resolved server-side.
+- `/chat` now supports natural follow-up slot selection for conflict recovery:
+  - option index selection (`1/2/3`, first/second/third),
+  - direct natural-language time input (`8:30 PM works`, `try 9 PM instead`) anchored to pending booking date,
+  - retry of newly requested times with normal conflict re-check.
+- `hitl_node` now persists real booking payload metadata from conflict execution context (title, attendees, duration, invite/meet flags, original start).
+- Added regression tests:
+  - `tests/api/test_chat_conflict_conversational.py`.
