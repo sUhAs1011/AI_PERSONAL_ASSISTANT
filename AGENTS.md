@@ -263,3 +263,38 @@ npm run build
   - `tests/graph/test_agent_tool_use_failure.py` (rewrite guard for location follow-ups),
   - `tests/graph/test_tool_result_node.py` (location-update action normalization),
   - `tests/services/test_mcp_client_compat.py` (location-only update fallback patch).
+
+## Recent Cache-First Query + Location Query Fixes
+- Added backend in-memory cache service `app/services/calendar/event_cache.py`:
+  - primes and stores normalized events for `today` + `tomorrow` per user/timezone,
+  - provides deterministic `canonical_event_id` generation,
+  - supports fast query answers (`location`, `duration`, day event list) from cache,
+  - supports robust alias-based event-id resolution.
+- Added new API contracts and endpoint for cache priming:
+  - `app/schemas.py`: `CalendarCachePrimeRequest`, `CalendarCachePrimeResponse`,
+  - `app/main.py`: `POST /calendar/cache/prime`.
+- Added cache refresh on successful calendar actions (`created`/`updated`/`cancelled`):
+  - `app/main.py` now refreshes cache after `/chat` and `/hitl/respond` action completions.
+- Added query fast-path in `app/graph/nodes/agent_node.py`:
+  - for `calendar_query`, cache is consulted first for today/tomorrow turns,
+  - on cache hit, agent returns normalized `execution_result` without tool call.
+- Added new query tool `get_event_location` in `app/tools/calendar_proxy.py`:
+  - cache-aware first, MCP `find_events` fallback,
+  - structured location payload for finalizer consumption.
+- Updated tool/result/prompt handling for location queries:
+  - `app/graph/nodes/tool_result_node.py` normalizes `get_event_location`,
+  - `app/graph/nodes/finalizer_node.py` includes location context and deterministic location fallback summaries,
+  - `app/llm/prompts.py` now explicitly steers location questions to `get_event_location`.
+- Fixed sanitizer regression in `app/graph/nodes/agent_node.py`:
+  - `update_event_location` no longer blocks title-like `event_id` when required context (`current_start_iso`, `location`) exists.
+- Frontend cache priming integration:
+  - `frontend/src/lib/api.js`: `primeCalendarCache` API wrapper,
+  - `frontend/src/App.jsx`: primes cache on login/session restore (non-blocking).
+- Added regression tests:
+  - `tests/services/test_event_cache.py`,
+  - `tests/api/test_event_cache_prime.py`,
+  - `tests/tools/test_event_location_tool.py`,
+  - updated `tests/graph/test_agent_tool_use_failure.py`,
+  - updated `tests/graph/test_tool_result_node.py`,
+  - updated `tests/graph/test_finalizer_modes.py`,
+  - updated `tests/api/test_hitl_rebook.py`.

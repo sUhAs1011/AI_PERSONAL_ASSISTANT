@@ -72,6 +72,25 @@ def tool_result_node(state: dict) -> dict:
             },
         }
 
+    if tool_name == "get_event_location":
+        logger.info(
+            "tool_result.get_event_location trace_id=%s status=%s has_location=%s",
+            trace_id,
+            content.get("status", "ok"),
+            bool(content.get("location")),
+        )
+        return {
+            "response_mode": ConversationMode.CALENDAR_QUERY.value,
+            "execution_result": {
+                "status": content.get("status", "ok"),
+                "summary": content.get("summary"),
+                "title": content.get("title") or content.get("title_hint"),
+                "location": content.get("location"),
+                "start_iso": content.get("start_iso"),
+                "tool": tool_name,
+            },
+        }
+
     if tool_name == "schedule_mutual":
         alternatives = content.get("alternatives", [])
         if alternatives:

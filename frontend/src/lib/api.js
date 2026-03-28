@@ -50,3 +50,13 @@ export async function getEvents(userId, startIso, endIso) {
   if (!res.ok) throw new Error("Failed to load events");
   return res.json();
 }
+
+export async function primeCalendarCache(userId, timezone) {
+  const res = await fetch(`${API_BASE}/calendar/cache/prime`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ user_id: userId, timezone }),
+  });
+  if (!res.ok) throw new Error("Failed to prime calendar cache");
+  return res.json();
+}

@@ -5,6 +5,7 @@ import app.main as app_main
 
 def test_hitl_respond_rebooks_selected_slot_and_uses_finalizer(monkeypatch):
     calls = []
+    cache_refreshes = []
 
     class StubBookTool:
         @staticmethod
@@ -16,6 +17,13 @@ def test_hitl_respond_rebooks_selected_slot_and_uses_finalizer(monkeypatch):
             }
 
     app_main.book_event = StubBookTool
+
+    class FakeCache:
+        def prime_user_window(self, user_id: str, timezone: str) -> dict:
+            cache_refreshes.append((user_id, timezone))
+            return {"status": "ok", "today_count": 1, "tomorrow_count": 0, "total_count": 1}
+
+    monkeypatch.setattr(app_main, "event_cache", FakeCache())
 
     def fake_finalizer_node(state):
         assert state["execution_result"]["status"] == "created"
@@ -51,6 +59,7 @@ def test_hitl_respond_rebooks_selected_slot_and_uses_finalizer(monkeypatch):
     assert calls[0]["start_iso"] == "2026-03-27T16:00:00+05:30"
     assert body["summary"] == "Unified finalizer summary"
     assert body["latest_event_id"] == "evt_2"
+    assert cache_refreshes == [("u1", "Asia/Kolkata")]
 
 
 def test_hitl_respond_invalid_action_uses_finalizer(monkeypatch):

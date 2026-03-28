@@ -141,3 +141,81 @@ def test_finalizer_event_not_found_error_is_specific():
     )
     summary = out["summary"].lower()
     assert "confirm the event" in summary
+
+
+def test_finalizer_location_query_prefers_location_when_available(monkeypatch):
+    class MockMsg:
+        def __init__(self, content: str):
+            self.content = content
+
+    class MockLLM:
+        def invoke(self, _messages):
+            return MockMsg("Done.")
+
+    monkeypatch.setattr("app.graph.nodes.finalizer_node.build_llm", lambda **_: MockLLM())
+    out = finalizer_node(
+        {
+            "timezone": "Asia/Kolkata",
+            "response_mode": "calendar_query",
+            "messages": [HumanMessage(content="where is my dinner date today?")],
+            "execution_result": {
+                "status": "ok",
+                "title": "Dinner Date",
+                "location": "Plan B",
+                "start_iso": "2026-03-28T20:00:00+05:30",
+            },
+        }
+    )
+    summary = out["summary"].lower()
+    assert "plan b" in summary
+    assert "dinner date" in summary
+
+
+def test_finalizer_location_query_reports_missing_location(monkeypatch):
+    class MockMsg:
+        def __init__(self, content: str):
+            self.content = content
+
+    class MockLLM:
+        def invoke(self, _messages):
+            return MockMsg("Done.")
+
+    monkeypatch.setattr("app.graph.nodes.finalizer_node.build_llm", lambda **_: MockLLM())
+    out = finalizer_node(
+        {
+            "timezone": "Asia/Kolkata",
+            "response_mode": "calendar_query",
+            "messages": [HumanMessage(content="where is my dinner date today?")],
+            "execution_result": {
+                "status": "ok",
+                "title": "Dinner Date",
+                "location": "",
+                "start_iso": "2026-03-28T20:00:00+05:30",
+            },
+        }
+    )
+    summary = out["summary"].lower()
+    assert "doesn't have a location" in summary
+
+
+def test_finalizer_cancelled_action_uses_grounded_summary_without_llm(monkeypatch):
+    class FailLLM:
+        def invoke(self, _messages):
+            raise AssertionError("LLM should not be called for grounded cancelled summaries")
+
+    monkeypatch.setattr("app.graph.nodes.finalizer_node.build_llm", lambda **_: FailLLM())
+    out = finalizer_node(
+        {
+            "timezone": "Asia/Kolkata",
+            "response_mode": "calendar_action",
+            "execution_result": {
+                "status": "cancelled",
+                "event_id": "evt_1",
+                "title": "Dinner Date",
+                "start_iso": "2026-03-28T20:00:00+05:30",
+            },
+        }
+    )
+    summary = out["summary"].lower()
+    assert "cancelled" in summary
+    assert "dinner date" in summary

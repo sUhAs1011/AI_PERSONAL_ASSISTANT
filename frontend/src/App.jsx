@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { chat, submitHitlDecision, getPreferences, putPreferences, getEvents } from './lib/api'
+import { chat, submitHitlDecision, getPreferences, putPreferences, getEvents, primeCalendarCache } from './lib/api'
 import {
   Calendar,
   ChevronLeft,
@@ -497,12 +497,21 @@ const PreferencesPage = () => {
 
 // --- MAIN APP COMPONENT ---
 function App() {
+  const userId = 'u1'
   const [isLoggedIn, setIsLoggedIn] = useState(() => localStorage.getItem('auth_token') === 'logged_in')
   const [activeTab, setActiveTab] = useState('chat')
   const [chatMessages, setChatMessages] = useState([
     { type: 'ai', content: 'I can help you book, reschedule, or check availability. Try: "Book a design review tomorrow at 3 PM with alex@example.com".' }
   ])
   const [chatHistory, setChatHistory] = useState([])
+
+  useEffect(() => {
+    if (!isLoggedIn) return
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
+    primeCalendarCache(userId, timezone).catch((err) => {
+      console.warn('calendar cache prime failed', err)
+    })
+  }, [isLoggedIn])
 
   const handleLogin = () => {
     localStorage.setItem('auth_token', 'logged_in')

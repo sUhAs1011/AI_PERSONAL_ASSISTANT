@@ -10,11 +10,14 @@ from app.core.logging import configure_logging
 from app.graph.builder import build_graph
 from app.graph.nodes.finalizer_node import finalizer_node
 from app.schemas import (
+    CalendarCachePrimeRequest,
+    CalendarCachePrimeResponse,
     ChatRequest,
     ChatResponse,
     HitlResponse,
     PreferencesUpsertRequest,
 )
+from app.services.calendar.event_cache import event_cache
 from app.services.hitl.pending_repo import pending_repo
 from app.services.hitl.resolve_action import resolve_hitl_action
 from app.services.memory.preferences_repo import PreferencesRepo
@@ -73,9 +76,45 @@ def _normalized_final_response(result: dict, default_response_mode: str) -> dict
     }
 
 
+def _refresh_cache_after_calendar_action(user_id: str | None, timezone: str, response_mode: str, status: str) -> None:
+    if not user_id:
+        return
+    if response_mode != "calendar_action":
+        return
+    if status not in {"created", "updated", "cancelled"}:
+        return
+    try:
+        cache_result = event_cache.prime_user_window(user_id=user_id, timezone=timezone)
+        logger.info(
+            "cache.refresh_after_action user_id=%s timezone=%s status=%s total=%s",
+            user_id,
+            timezone,
+            status,
+            cache_result.get("total_count"),
+        )
+    except Exception:
+        logger.exception(
+            "cache.refresh_after_action_failed user_id=%s timezone=%s status=%s",
+            user_id,
+            timezone,
+            status,
+        )
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.post("/calendar/cache/prime", response_model=CalendarCachePrimeResponse)
+def prime_calendar_cache(payload: CalendarCachePrimeRequest) -> CalendarCachePrimeResponse:
+    result = event_cache.prime_user_window(user_id=payload.user_id, timezone=payload.timezone)
+    return CalendarCachePrimeResponse(
+        status=str(result.get("status", "ok")),
+        today_count=int(result.get("today_count", 0)),
+        tomorrow_count=int(result.get("tomorrow_count", 0)),
+        total_count=int(result.get("total_count", 0)),
+    )
 
 
 @app.post("/chat", response_model=ChatResponse)
@@ -167,6 +206,12 @@ def chat(payload: ChatRequest) -> ChatResponse:
         result.get("iteration_count"),
         summary[:220],
     )
+    _refresh_cache_after_calendar_action(
+        user_id=payload.user_id,
+        timezone=payload.timezone,
+        response_mode=response_mode,
+        status=normalized["status"],
+    )
     return ChatResponse(
         status=normalized["status"],
         summary=summary,
@@ -218,6 +263,12 @@ def respond_hitl(payload: HitlResponse) -> ChatResponse:
         payload.action_id,
         normalized["status"],
         normalized["latest_event_id"],
+    )
+    _refresh_cache_after_calendar_action(
+        user_id=resolved.get("user_id"),
+        timezone=resolved.get("timezone", "Asia/Kolkata"),
+        response_mode=normalized["response_mode"],
+        status=normalized["status"],
     )
     return ChatResponse(
         status=normalized["status"],

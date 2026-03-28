@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 from langchain_core.tools import tool
 
+from app.services.calendar.event_cache import event_cache
 from app.services.calendar.mcp_client import MCPClient
 from app.services.time_utils import parse_natural_time, resolve_date_range
 
@@ -302,6 +303,91 @@ def get_event_duration(
         "duration_minutes": duration_minutes,
         "start_iso": start.isoformat(),
         "end_iso": end.isoformat(),
+        "summary": summary,
+    }
+
+
+@tool
+def get_event_location(
+    user_id: str,
+    timezone: str,
+    title_hint: str,
+    date_range: str = "today",
+) -> dict:
+    """Get location details for a named event by checking cache first and falling back to MCP event search."""
+    logger.info(
+        "tool.get_event_location.start user_id=%s title_hint=%r date_range=%r timezone=%s",
+        user_id,
+        title_hint,
+        date_range,
+        timezone,
+    )
+
+    normalized_range = (date_range or "today").strip().lower()
+    if normalized_range in {"today", "tomorrow"}:
+        cached = event_cache.query_today_tomorrow(
+            user_id=user_id,
+            timezone=timezone,
+            user_message=f"where is my {title_hint} {normalized_range}",
+            event_id_hint=None,
+        )
+        if isinstance(cached, dict):
+            status = cached.get("status")
+            if status == "not_found":
+                return {
+                    "status": "not_found",
+                    "title_hint": title_hint,
+                    "summary": cached.get("summary")
+                    or f"I couldn't find an event matching '{title_hint}' in that time range.",
+                }
+            if status == "ok" and "location" in cached:
+                title = str(cached.get("title") or title_hint or "that event")
+                location = str(cached.get("location") or "").strip()
+                if location:
+                    summary = cached.get("summary") or f"Your {title} is at {location}."
+                else:
+                    summary = cached.get("summary") or f"I found {title}, but it doesn't have a location set yet."
+                return {
+                    "status": "ok",
+                    "title": title,
+                    "location": location,
+                    "start_iso": cached.get("start_iso"),
+                    "summary": summary,
+                }
+
+    start_iso, end_iso = _resolve_duration_range(date_range=date_range, timezone=timezone)
+    raw = _client().call_tool(
+        "mcp_google_calendar_find_events",
+        {"user_id": user_id, "start_iso": start_iso, "end_iso": end_iso},
+    )
+    events = raw.get("events", []) if isinstance(raw, dict) else []
+    match = _pick_best_event(events=events, title_hint=title_hint)
+    if match is None:
+        logger.info("tool.get_event_location.not_found user_id=%s title_hint=%r", user_id, title_hint)
+        return {
+            "status": "not_found",
+            "title_hint": title_hint,
+            "summary": f"I couldn't find an event matching '{title_hint}' in that time range.",
+        }
+
+    start, _end = _event_start_end(match, timezone=timezone)
+    title = str(match.get("summary") or match.get("title") or "that event")
+    location = str(match.get("location") or "").strip()
+    if location:
+        summary = f"Your {title} is at {location}."
+    else:
+        summary = f"I found {title}, but it doesn't have a location set yet."
+    logger.info(
+        "tool.get_event_location.ok user_id=%s title=%r has_location=%s",
+        user_id,
+        title,
+        bool(location),
+    )
+    return {
+        "status": "ok",
+        "title": title,
+        "location": location,
+        "start_iso": start.isoformat() if start else None,
         "summary": summary,
     }
 
@@ -672,18 +758,39 @@ def update_event_location(
 
 
 @tool
-def cancel_event(user_id: str, event_id: str) -> dict:
+def cancel_event(user_id: str, event_id: str, timezone: str = "Asia/Kolkata") -> dict:
     """Cancel an existing event by id and return a stable status payload."""
+    cached_event: dict | None = None
+    try:
+        cached_event = event_cache.get_event_by_reference(
+            user_id=user_id,
+            timezone=timezone,
+            event_ref_or_hint=event_id,
+        )
+    except Exception:
+        logger.exception("tool.cancel_event.cache_lookup_failed user_id=%s event_id=%s", user_id, event_id)
+
     try:
         logger.info("tool.cancel_event.start user_id=%s event_id=%s", user_id, event_id)
         raw = _client().call_tool(
             "mcp_google_calendar_delete_event",
             {"user_id": user_id, "event_id": event_id},
         )
-        return {"status": "cancelled", "event_id": event_id, "raw": raw}
+        out = {"status": "cancelled", "event_id": event_id, "raw": raw}
+        if isinstance(cached_event, dict):
+            title = cached_event.get("summary") or cached_event.get("title")
+            start_iso = cached_event.get("start_iso")
+            location = cached_event.get("location")
+            if isinstance(title, str) and title.strip():
+                out["title"] = title.strip()
+            if isinstance(start_iso, str) and start_iso.strip():
+                out["start_iso"] = start_iso.strip()
+            if isinstance(location, str):
+                out["location"] = location.strip()
+        return out
     except Exception as exc:
         logger.exception("tool.cancel_event.error user_id=%s event_id=%s", user_id, event_id)
-        return {"status": "error", "error": str(exc)}
+        return {"status": "error", "error": str(exc), "event_id": event_id}
 
 
 @tool

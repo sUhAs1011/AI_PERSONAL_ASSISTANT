@@ -74,6 +74,31 @@ def test_get_event_duration_tool_message_populates_execution_result():
     assert "Dinner Date" in result["execution_result"]["summary"]
 
 
+def test_get_event_location_tool_message_populates_execution_result():
+    state = {
+        "messages": [
+            ToolMessage(
+                content=json.dumps(
+                    {
+                        "status": "ok",
+                        "summary": "Your Dinner Date is at Plan B.",
+                        "title": "Dinner Date",
+                        "location": "Plan B",
+                        "start_iso": "2026-03-28T20:00:00+05:30",
+                    }
+                ),
+                tool_call_id="call_3b",
+                name="get_event_location",
+            )
+        ]
+    }
+    result = tool_result_node(state)
+    assert result["response_mode"] == "calendar_query"
+    assert result["execution_result"]["status"] == "ok"
+    assert result["execution_result"]["location"] == "Plan B"
+    assert "Dinner Date" in result["execution_result"]["summary"]
+
+
 def test_update_event_duration_tool_message_populates_action_execution_result():
     state = {
         "messages": [

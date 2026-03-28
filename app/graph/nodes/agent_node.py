@@ -8,12 +8,14 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from app.llm.client import build_llm
 from app.llm.prompts import render_agent_system_prompt, render_general_chat_prompt
 from app.llm.router import ConversationMode, route_mode
+from app.services.calendar.event_cache import event_cache
 from app.tools.calendar_proxy import (
     book_event,
     cancel_event,
     check_availability,
     find_events,
     get_event_duration,
+    get_event_location,
     update_event_location,
     update_event_duration,
     reschedule_event,
@@ -24,6 +26,7 @@ calendar_query_tools = [
     check_availability,
     find_events,
     get_event_duration,
+    get_event_location,
 ]
 
 calendar_action_tools = [
@@ -151,6 +154,7 @@ def _sanitize_tool_calls(
             "update_event_location",
             "reschedule_event",
             "get_event_duration",
+            "get_event_location",
             "update_event_duration",
         } and state_user_id:
             args["user_id"] = state_user_id
@@ -159,9 +163,11 @@ def _sanitize_tool_calls(
             "book_event",
             "check_availability",
             "schedule_mutual",
+            "cancel_event",
             "update_event_location",
             "reschedule_event",
             "get_event_duration",
+            "get_event_location",
             "update_event_duration",
         }:
             args["timezone"] = timezone
@@ -203,14 +209,8 @@ def _sanitize_tool_calls(
             if marker_start_iso:
                 args["current_start_iso"] = marker_start_iso
 
-            event_id = args.get("event_id")
             current_start_iso = args.get("current_start_iso")
             location = args.get("location")
-            if _is_suspicious_event_id(event_id):
-                return (
-                    sanitized,
-                    "I couldn't find the exact event reference to update location. Please confirm the event.",
-                )
             if not isinstance(current_start_iso, str) or not current_start_iso.strip():
                 return (
                     sanitized,
@@ -295,6 +295,30 @@ def agent_node(state: dict) -> dict:
             "summary": summary,
             "execution_result": {"status": "ok", "kind": "general_chat"},
         }
+
+    if route.mode == ConversationMode.CALENDAR_QUERY and state.get("user_id"):
+        marker_event_id, _marker_start_iso = _extract_latest_event_marker(state_messages)
+        cached_query_result = event_cache.query_today_tomorrow(
+            user_id=state.get("user_id"),
+            timezone=timezone,
+            user_message=latest_user_message,
+            event_id_hint=marker_event_id,
+        )
+        if isinstance(cached_query_result, dict):
+            logger.info(
+                "agent.query_cache_hit trace_id=%s user_id=%s status=%s",
+                trace_id,
+                state.get("user_id"),
+                cached_query_result.get("status"),
+            )
+            return {
+                "iteration_count": state.get("iteration_count", 0) + 1,
+                "response_mode": ConversationMode.CALENDAR_QUERY.value,
+                "execution_result": {
+                    "tool": "event_cache",
+                    **cached_query_result,
+                },
+            }
 
     mode_tools = (
         calendar_query_tools

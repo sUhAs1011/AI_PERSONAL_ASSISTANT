@@ -90,7 +90,51 @@ def test_agent_node_uses_query_tool_subset(monkeypatch):
 
     assert result["response_mode"] == "calendar_query"
     assert "get_event_duration" in captured["tool_names"]
+    assert "get_event_location" in captured["tool_names"]
     assert "book_event" not in captured["tool_names"]
+
+
+def test_agent_node_uses_cache_fastpath_for_calendar_query(monkeypatch):
+    monkeypatch.setattr(
+        agent_mod,
+        "build_llm",
+        lambda bound_tools=None: (_ for _ in ()).throw(AssertionError("LLM should not be called for cache fast-path")),
+    )
+    monkeypatch.setattr(
+        agent_mod,
+        "route_mode",
+        lambda user_message, conversation_history, timezone: ModeRoute(
+            mode=ConversationMode.CALENDAR_QUERY,
+            confidence="high",
+            reason="test",
+        ),
+    )
+
+    class FakeCache:
+        def query_today_tomorrow(self, **_kwargs):
+            return {
+                "status": "ok",
+                "title": "Dinner Date",
+                "location": "Plan B",
+                "start_iso": "2026-03-28T20:00:00+05:30",
+                "summary": "Your Dinner Date is at Plan B.",
+            }
+
+    monkeypatch.setattr(agent_mod, "event_cache", FakeCache())
+
+    result = agent_mod.agent_node(
+        {
+            "user_id": "u1",
+            "timezone": "Asia/Kolkata",
+            "preferences": {},
+            "messages": [HumanMessage(content="where is my dinner date today?")],
+            "iteration_count": 0,
+        }
+    )
+
+    assert result["response_mode"] == "calendar_query"
+    assert result["execution_result"]["tool"] == "event_cache"
+    assert result["execution_result"]["location"] == "Plan B"
 
 
 def test_agent_node_uses_action_tool_subset(monkeypatch):
@@ -279,3 +323,52 @@ def test_agent_node_rewrites_location_followup_book_event_to_update_location(mon
     assert tool_call["args"]["event_id"] == "evt_77"
     assert tool_call["args"]["current_start_iso"] == "2026-03-28T20:00:00+05:30"
     assert tool_call["args"]["location"] == "Pizza Bakery indiranagar"
+
+
+def test_agent_node_allows_location_update_with_title_like_event_id_when_context_present(monkeypatch):
+    class FakeLLM:
+        def invoke(self, _messages):
+            return AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "update_event_location",
+                        "id": "call_loc_2",
+                        "type": "tool_call",
+                        "args": {
+                            "user_id": "user123",
+                            "event_id": "dinner_date",
+                            "current_start_iso": "2026-03-28T20:00:00+05:30",
+                            "location": "Plan B",
+                        },
+                    }
+                ],
+            )
+
+    monkeypatch.setattr(agent_mod, "build_llm", lambda bound_tools=None: FakeLLM())
+    monkeypatch.setattr(
+        agent_mod,
+        "route_mode",
+        lambda user_message, conversation_history, timezone: ModeRoute(
+            mode=ConversationMode.CALENDAR_ACTION,
+            confidence="high",
+            reason="test",
+        ),
+    )
+
+    result = agent_mod.agent_node(
+        {
+            "user_id": "u1",
+            "timezone": "Asia/Kolkata",
+            "preferences": {},
+            "messages": [HumanMessage(content="change dinner date location to Plan B")],
+            "iteration_count": 0,
+        }
+    )
+
+    assert "pending_clarification" not in result
+    tool_call = result["messages"][0].tool_calls[0]
+    assert tool_call["name"] == "update_event_location"
+    assert tool_call["args"]["event_id"] == "dinner_date"
+    assert tool_call["args"]["current_start_iso"] == "2026-03-28T20:00:00+05:30"
+    assert tool_call["args"]["location"] == "Plan B"

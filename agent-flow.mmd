@@ -1,10 +1,11 @@
 flowchart LR
     U["User"] --> CHAT["/chat"]
+    U --> PRIME["/calendar/cache/prime"]
 
     subgraph G["LangGraph booking_graph (/chat path)"]
       direction LR
       S["Build AgentState<br/>messages + prefs + trace_id"] --> START(("START"))
-      START --> A["agent_node<br/>route_mode + mode-specific tools"]
+      START --> A["agent_node<br/>route_mode + mode-specific tools<br/>calendar_query cache fast-path (today/tomorrow)"]
       A --> SAN["sanitize tool calls<br/>inject user_id/timezone<br/>hydrate [event_id,start_iso]<br/>rewrite location follow-up<br/>book_event -> update_event_location"]
       SAN --> RA{"route_after_agent"}
       RA -->|tool_calls| TN["ToolNode"]
@@ -20,13 +21,15 @@ flowchart LR
 
     CHAT --> S
     END --> CRES["/chat ChatResponse<br/>status + summary + response_mode<br/>latest_event_id/latest_start_iso<br/>optional hitl_action_id + alternatives"]
+    CRES --> CR["refresh cache after action<br/>status in created/updated/cancelled"]
 
     CRES -->|if conflict options shown| UH["User selects option"] --> HITL["/hitl/respond"]
     HITL --> RH["resolve_hitl_action<br/>(execution_result only)"] --> HF["finalizer_node"] --> HRES["/hitl/respond ChatResponse<br/>same finalizer contract"]
+    HRES --> CR
 
     subgraph T["Calendar Tools (via ToolNode)"]
       direction TB
-      Q["Query: find_events, check_availability, get_event_duration"]
+      Q["Query: find_events, check_availability,<br/>get_event_duration, get_event_location"]
       ACT["Action: book_event, reschedule_event,<br/>cancel_event, update_event_duration,<br/>update_event_location, schedule_mutual"]
       MCP["MCPClient<br/>/tools/call -> REST fallback"]
       Q --> MCP
@@ -40,8 +43,12 @@ flowchart LR
       HIST["conversation_history<br/>(client-passed each turn)"]
       PREF["PreferencesRepo (SQLite)"]
       PEND["PendingActionRepo (SQLite)"]
+      CACHE["EventCacheService (in-memory)<br/>today + tomorrow events"]
     end
     CHAT -.uses.-> HIST
     CHAT -.reads.-> PREF
     H -.writes.-> PEND
     HITL -.reads.-> PEND
+    PRIME --> CACHE
+    A -.query fast-path.-> CACHE
+    CR --> CACHE

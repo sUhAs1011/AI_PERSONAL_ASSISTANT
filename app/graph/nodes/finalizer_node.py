@@ -100,10 +100,16 @@ def _build_final_response(
 
 
 def _action_summary_with_fallback(response_mode: str, result: dict, trace_id: str, timezone: str) -> str:
-    if (result or {}).get("status") == "error":
+    status = (result or {}).get("status")
+    if status == "error":
         summary = _action_error_summary(result=result, timezone=timezone)
         logger.info("finalizer.action_error_summary trace_id=%s summary=%r", trace_id, summary[:220])
         return summary
+
+    grounded = _grounded_action_success_summary(result=result, timezone=timezone)
+    if grounded:
+        logger.info("finalizer.action_grounded_summary trace_id=%s summary=%r", trace_id, grounded[:220])
+        return grounded
 
     try:
         llm = build_llm(bound_tools=[])
@@ -122,6 +128,29 @@ def _action_summary_with_fallback(response_mode: str, result: dict, trace_id: st
     fallback = _action_fallback(result)
     logger.info("finalizer.action_fallback trace_id=%s summary=%r", trace_id, fallback[:220])
     return fallback
+
+
+def _grounded_action_success_summary(result: dict, timezone: str) -> str | None:
+    if not isinstance(result, dict):
+        return None
+
+    status = result.get("status")
+    if status != "cancelled":
+        return None
+
+    title = str(result.get("title") or "").strip()
+    start_iso = result.get("start_iso")
+    start_dt = _parse_dt(start_iso, timezone) if isinstance(start_iso, str) else None
+    if title and start_dt:
+        day_label = relative_day_label(start_dt.date(), datetime.now(ZoneInfo(timezone)))
+        if day_label in {"today", "tomorrow"}:
+            when = f"{day_label} at {format_time_only(start_dt)}"
+        else:
+            when = f"on {day_label} at {format_time_only(start_dt)}"
+        return f"Cancelled {title} scheduled {when}."
+    if title:
+        return f"Cancelled {title}."
+    return "Your event has been cancelled."
 
 
 def _action_error_summary(result: dict, timezone: str) -> str:
@@ -205,6 +234,7 @@ def _calendar_query_llm_summary(state: dict, result: dict) -> str | None:
 
 def _calendar_query_context_for_llm(result: dict, timezone: str, user_message: str) -> str:
     lines: list[str] = []
+
     events = result.get("events")
     if isinstance(events, list):
         lines.append(f"event_count: {len(events)}")
@@ -217,7 +247,20 @@ def _calendar_query_context_for_llm(result: dict, timezone: str, user_message: s
             if start_dt:
                 day_label = relative_day_label(start_dt.date(), datetime.now(ZoneInfo(timezone)))
                 when = f"{day_label} at {format_time_only(start_dt)}"
-            lines.append(f"event_{idx}: title={title}; when={when}")
+            location = str(event.get("location") or "").strip()
+            if location:
+                lines.append(f"event_{idx}: title={title}; when={when}; location={location}")
+            else:
+                lines.append(f"event_{idx}: title={title}; when={when}")
+
+    title = result.get("title")
+    location = result.get("location")
+    if isinstance(title, str) and title.strip():
+        location_text = str(location).strip() if isinstance(location, str) else ""
+        if location_text:
+            lines.append(f"event_detail: title={title.strip()}; location={location_text}")
+        else:
+            lines.append(f"event_detail: title={title.strip()}; location=not_set")
 
     summary = result.get("summary")
     if isinstance(summary, str) and summary.strip():
@@ -262,8 +305,18 @@ def _looks_like_iso_text(text: str) -> bool:
 
 def _calendar_query_fallback(result: dict, timezone: str, user_message: str) -> str:
     now_local = datetime.now(ZoneInfo(timezone))
+    asked_location = _is_location_question(user_message)
     asked_tomorrow = "tomorrow" in user_message.lower()
     asked_today = "today" in user_message.lower()
+
+    if asked_location:
+        title = str(result.get("title") or "").strip()
+        location = str(result.get("location") or "").strip()
+        if title:
+            if location:
+                return f"Your {title} is at {location}."
+            return f"I found {title}, but it doesn't have a location set yet."
+
     events = result.get("events")
     if isinstance(events, list):
         if not events:
@@ -308,6 +361,13 @@ def _calendar_query_fallback(result: dict, timezone: str, user_message: str) -> 
             day_label = relative_day_label(start.date(), now_local)
             return f"You're free {day_label} from {format_time_only(start)} to {format_time_only(end)}."
     return "I checked your schedule but need one more detail to summarize it."
+
+
+def _is_location_question(user_message: str) -> bool:
+    text = (user_message or "").strip().lower()
+    if not text:
+        return False
+    return any(token in text for token in ("where", "location", "venue", "address", "place"))
 
 
 def _action_fallback(result: dict) -> str:

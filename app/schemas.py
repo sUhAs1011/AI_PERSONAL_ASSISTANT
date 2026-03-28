@@ -8,6 +8,18 @@ class ChatRequest(BaseModel):
     conversation_history: list[dict] = Field(default_factory=list)
 
 
+class CalendarCachePrimeRequest(BaseModel):
+    user_id: str
+    timezone: str
+
+
+class CalendarCachePrimeResponse(BaseModel):
+    status: str
+    today_count: int
+    tomorrow_count: int
+    total_count: int
+
+
 class ChatResponse(BaseModel):
     status: str
     summary: str
