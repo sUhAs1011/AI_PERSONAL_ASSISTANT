@@ -1,5 +1,6 @@
 import os
 import logging
+import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -9,6 +10,7 @@ from app.services.calendar.mcp_client import MCPClient
 from app.services.time_utils import parse_natural_time, resolve_date_range
 
 logger = logging.getLogger(__name__)
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 def _client() -> MCPClient:
@@ -25,6 +27,35 @@ def _format_window(window: dict) -> str:
     start_s = start_dt.strftime("%I:%M %p").lstrip("0")
     end_s = end_dt.strftime("%I:%M %p").lstrip("0")
     return f"{start_s}-{end_s} on {start_dt.strftime('%A')}"
+
+
+def _parse_iso_datetime(value: str) -> datetime | None:
+    text = (value or "").strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def _normalize_start_iso(value: str, timezone: str) -> str:
+    parsed_iso = _parse_iso_datetime(value)
+    if parsed_iso is not None:
+        if parsed_iso.tzinfo is None:
+            parsed_iso = parsed_iso.replace(tzinfo=ZoneInfo(timezone))
+        return parsed_iso.astimezone(ZoneInfo(timezone)).isoformat()
+    now = datetime.now(ZoneInfo(timezone))
+    parsed_natural = parse_natural_time(value, timezone, now=now)
+    if parsed_natural.tzinfo is None:
+        parsed_natural = parsed_natural.replace(tzinfo=ZoneInfo(timezone))
+    return parsed_natural.astimezone(ZoneInfo(timezone)).isoformat()
+
+
+def _invalid_attendees(attendees: list[str]) -> list[str]:
+    return [email for email in attendees if not EMAIL_RE.match(email)]
 
 
 @tool
@@ -114,34 +145,53 @@ def book_event(
     add_meet_link: bool,
 ) -> dict:
     """Book an event. Coerce non-ISO times, enforce stable output, never crash."""
+    normalized_attendees = [
+        attendee.strip()
+        for attendee in (attendees or [])
+        if isinstance(attendee, str) and attendee.strip()
+    ]
+    invalid_attendees = _invalid_attendees(normalized_attendees)
+    if invalid_attendees:
+        logger.warning(
+            "tool.book_event.invalid_attendees user_id=%s count=%s",
+            user_id,
+            len(invalid_attendees),
+        )
+        return {
+            "status": "error",
+            "error_code": "invalid_attendees",
+            "error": "One or more attendee emails are invalid.",
+            "title": title,
+            "start_iso": start_iso,
+            "invalid_attendees": invalid_attendees,
+        }
+
+    try:
+        start_iso = _normalize_start_iso(start_iso, timezone)
+    except Exception:
+        logger.exception("tool.book_event.invalid_datetime user_id=%s start_iso=%r", user_id, start_iso)
+        return {
+            "status": "error",
+            "error_code": "invalid_datetime",
+            "error": "Could not parse the requested event time.",
+            "title": title,
+            "start_iso": start_iso,
+            "attendee_count": len(normalized_attendees),
+        }
+
     try:
         logger.info("tool.book_event.start user_id=%s title=%r start_iso=%s", user_id, title, start_iso)
-        if "T" not in start_iso:
-            now = datetime.now(ZoneInfo(timezone))
-            coerced = parse_natural_time(start_iso, timezone, now=now)
-            start_iso = coerced.isoformat()
-            logger.info("tool.book_event.coerced_start user_id=%s start_iso=%s", user_id, start_iso)
         payload = {
             "user_id": user_id,
             "title": title,
             "start_iso": start_iso,
             "duration_minutes": duration_minutes,
-            "attendees": attendees,
+            "attendees": normalized_attendees,
             "send_invites": send_invites,
             "add_google_meet": add_meet_link,
         }
         created = _client().call_tool("mcp_google_calendar_create_event", payload)
         event_id = created.get("id")
-        if send_invites and event_id and attendees:
-            _client().call_tool(
-                "mcp_google_calendar_add_attendee",
-                {
-                    "user_id": user_id,
-                    "event_id": event_id,
-                    "attendees": attendees,
-                    "send_updates": True,
-                },
-            )
         meet_link = (
             created.get("meet_link")
             or created.get("google_meet_link")
@@ -152,12 +202,22 @@ def book_event(
             "event": {
                 "id": event_id,
                 "meet_link": meet_link,
-                "invite_status": "sent" if send_invites else "not_requested",
+                "invite_status": "sent" if send_invites and normalized_attendees else "not_requested",
             },
         }
     except Exception as exc:
         logger.exception("tool.book_event.error user_id=%s", user_id)
-        return {"status": "error", "error": str(exc)}
+        response = getattr(exc, "response", None)
+        http_status = getattr(response, "status_code", None)
+        return {
+            "status": "error",
+            "error_code": "calendar_api_error" if http_status else "internal_error",
+            "error": str(exc),
+            "http_status": http_status,
+            "title": title,
+            "start_iso": start_iso,
+            "attendee_count": len(normalized_attendees),
+        }
 
 
 @tool

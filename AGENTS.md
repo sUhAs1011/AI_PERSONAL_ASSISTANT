@@ -166,3 +166,14 @@ npm run build
 - Added tests:
 - `tests/graph/test_finalizer_hitl_contract.py`
 - Updated `tests/api/test_hitl_rebook.py`
+
+## Recent Booking Validation + Error Grounding Fix
+- `app/tools/calendar_proxy.py` `book_event` now:
+- strictly normalizes/validates datetime input before MCP calls,
+- validates attendee emails early (`invalid_attendees` error path),
+- removes redundant `mcp_google_calendar_add_attendee` sidecar call after create,
+- returns richer structured error payload (`error_code`, `http_status`, `title`, `start_iso`, `attendee_count`).
+- `app/graph/nodes/finalizer_node.py` now uses a deterministic error-summary path for `status=error` to avoid hallucinated success confirmations.
+- Added regression tests:
+- `tests/tools/test_calendar_proxy_coercion.py` (invalid datetime, invalid attendee, no sidecar add_attendee),
+- `tests/graph/test_finalizer_modes.py` (grounded error summary for action failures).

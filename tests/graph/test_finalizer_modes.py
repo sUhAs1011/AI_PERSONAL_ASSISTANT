@@ -95,3 +95,32 @@ def test_finalizer_never_returns_done_literal(monkeypatch):
     monkeypatch.setattr("app.graph.nodes.finalizer_node.build_llm", lambda **_: MockLLM())
     out = finalizer_node({"response_mode": "calendar_query", "execution_result": {"status": "ok"}})
     assert out["summary"].strip().lower() != "done."
+
+
+def test_finalizer_error_summary_is_grounded_and_not_successful(monkeypatch):
+    class MockMsg:
+        def __init__(self, content: str):
+            self.content = content
+
+    class MockLLM:
+        def invoke(self, _messages):
+            return MockMsg("✅ Booked successfully at 10:00 AM.")
+
+    monkeypatch.setattr("app.graph.nodes.finalizer_node.build_llm", lambda **_: MockLLM())
+    out = finalizer_node(
+        {
+            "timezone": "Asia/Kolkata",
+            "response_mode": "calendar_action",
+            "execution_result": {
+                "status": "error",
+                "error_code": "invalid_datetime",
+                "title": "Design Review",
+                "start_iso": "not-a-time",
+                "error": "Could not parse",
+            },
+        }
+    )
+    summary = out["summary"].lower()
+    assert "sorry" in summary
+    assert "couldn't" in summary
+    assert "booked successfully" not in summary

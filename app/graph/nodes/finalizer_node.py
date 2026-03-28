@@ -96,6 +96,11 @@ def _build_final_response(
 
 
 def _action_summary_with_fallback(response_mode: str, result: dict, trace_id: str, timezone: str) -> str:
+    if (result or {}).get("status") == "error":
+        summary = _action_error_summary(result=result, timezone=timezone)
+        logger.info("finalizer.action_error_summary trace_id=%s summary=%r", trace_id, summary[:220])
+        return summary
+
     try:
         llm = build_llm(bound_tools=[])
         msg = llm.invoke(
@@ -113,6 +118,32 @@ def _action_summary_with_fallback(response_mode: str, result: dict, trace_id: st
     fallback = _action_fallback(result)
     logger.info("finalizer.action_fallback trace_id=%s summary=%r", trace_id, fallback[:220])
     return fallback
+
+
+def _action_error_summary(result: dict, timezone: str) -> str:
+    title = result.get("title") if isinstance(result, dict) else None
+    start_iso = result.get("start_iso") if isinstance(result, dict) else None
+    error_code = result.get("error_code") if isinstance(result, dict) else None
+    start_dt = _parse_dt(start_iso, timezone) if isinstance(start_iso, str) else None
+
+    if start_dt:
+        day_label = relative_day_label(start_dt.date(), datetime.now(ZoneInfo(timezone)))
+        when = f"{day_label} at {format_time_only(start_dt)}" if day_label in {"today", "tomorrow"} else f"on {day_label} at {format_time_only(start_dt)}"
+    else:
+        when = None
+
+    if title and when:
+        prefix = f"Sorry, I couldn't complete your booking for {title} {when}."
+    elif title:
+        prefix = f"Sorry, I couldn't complete your booking for {title}."
+    else:
+        prefix = "Sorry, I couldn't complete that calendar request."
+
+    if error_code == "invalid_datetime":
+        return f"{prefix} The requested time format looks invalid, so please share a clear date and time."
+    if error_code == "invalid_attendees":
+        return f"{prefix} One or more attendee email addresses look invalid."
+    return prefix
 
 
 def _calendar_query_summary(state: dict, result: dict) -> str:
