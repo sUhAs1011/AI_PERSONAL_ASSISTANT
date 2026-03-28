@@ -10,7 +10,72 @@ import {
   Mic,
   Send,
   Zap,
+  LogOut,
 } from 'lucide-react'
+
+// --- LOGIN PAGE ---
+const LoginPage = ({ onLogin }) => {
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState('')
+
+  const handleLogin = (e) => {
+    e.preventDefault()
+    if (email === 'suhas.karamalaputti@gmail.com' && password === 'suhas123') {
+      onLogin()
+    } else {
+      setError('Invalid credentials.')
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-[#F7F8FC] flex items-center justify-center p-6 font-sans">
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="premium-card p-10 w-full max-w-md shadow-2xl shadow-brand/10 bg-white rounded-[40px] relative overflow-hidden"
+      >
+        <div className="absolute top-0 left-0 w-full h-2 bg-brand" />
+        <div className="flex justify-center mb-8">
+          <div className="w-16 h-16 bg-brand rounded-[22px] flex items-center justify-center text-white shadow-xl shadow-brand/40">
+            <Zap size={32} fill="currentColor" />
+          </div>
+        </div>
+        <h2 className="text-2xl font-black text-slate-900 text-center mb-2 tracking-tight">Welcome Back</h2>
+        <p className="text-slate-500 text-center font-medium mb-8 text-sm">Sign in to your intelligent assistant.</p>
+
+        <form onSubmit={handleLogin} className="space-y-6">
+          <div>
+            <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest mb-3 block">Email Address</label>
+            <input
+              type="email"
+              value={email}
+              onChange={e => { setEmail(e.target.value); setError('') }}
+              required
+              placeholder="email"
+              className="w-full bg-slate-50 border-2 border-slate-50 rounded-2xl px-5 py-4 font-bold text-slate-900 outline-none focus:border-brand/20 transition-all"
+            />
+          </div>
+          <div>
+            <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest mb-3 block">Password</label>
+            <input
+              type="password"
+              value={password}
+              onChange={e => { setPassword(e.target.value); setError('') }}
+              required
+              placeholder="password"
+              className="w-full bg-slate-50 border-2 border-slate-50 rounded-2xl px-5 py-4 font-bold text-slate-900 outline-none focus:border-brand/20 transition-all"
+            />
+          </div>
+          {error && <p className="text-red-500 text-xs font-bold text-center animate-in fade-in">{error}</p>}
+          <button type="submit" className="w-full bg-brand text-white font-black py-4 rounded-2xl shadow-xl shadow-brand/30 hover:scale-[1.02] active:scale-[0.98] transition-all pt-4">
+            Sign In
+          </button>
+        </form>
+      </motion.div>
+    </div>
+  )
+}
 
 // --- CHAT PAGE ---
 const ChatPage = ({ messages, setMessages, conversationHistory, setConversationHistory }) => {
@@ -304,11 +369,26 @@ const PreferencesPage = () => {
 
 // --- MAIN APP COMPONENT ---
 function App() {
+  const [isLoggedIn, setIsLoggedIn] = useState(() => localStorage.getItem('auth_token') === 'logged_in')
   const [activeTab, setActiveTab] = useState('chat')
   const [chatMessages, setChatMessages] = useState([
     { type: 'ai', content: 'I can help you book, reschedule, or check availability. Try: "Book a design review tomorrow at 3 PM with alex@example.com".' }
   ])
   const [chatHistory, setChatHistory] = useState([])
+
+  const handleLogin = () => {
+    localStorage.setItem('auth_token', 'logged_in')
+    setIsLoggedIn(true)
+  }
+
+  const handleLogout = () => {
+    localStorage.removeItem('auth_token')
+    setIsLoggedIn(false)
+  }
+
+  if (!isLoggedIn) {
+    return <LoginPage onLogin={handleLogin} />
+  }
 
   return (
     <div className="flex min-h-screen bg-[#F7F8FC] transition-colors duration-500 font-sans">
@@ -352,14 +432,21 @@ function App() {
         </nav>
 
         <div className="mt-auto w-full space-y-8">
-          <div className="p-4 bg-white border border-slate-100 shadow-sm rounded-[24px] flex items-center gap-3 cursor-pointer hover:shadow-md transition-shadow">
-            <div className="w-10 h-10 rounded-2xl bg-slate-100 overflow-hidden shrink-0 border-2 border-white">
-              <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=Felix`} alt="Profile" />
+          <div className="p-4 bg-white border border-slate-100 shadow-sm rounded-[24px] flex items-center gap-3 group relative cursor-pointer hover:shadow-md transition-shadow">
+            <div className="w-10 h-10 rounded-2xl bg-brand/10 text-brand flex items-center justify-center shrink-0 border-2 border-white">
+              <span className="font-black text-lg">S</span>
             </div>
             <div className="hidden lg:block flex-1 min-w-0">
-              <h4 className="font-bold text-slate-900 text-sm truncate">Alex Rivera</h4>
-              <p className="text-[10px] font-bold text-slate-400 truncate uppercase mt-0.5">Product Manager</p>
+              <h4 className="font-bold text-slate-900 text-sm truncate">Suhas K.</h4>
+              <p className="text-[10px] font-bold text-slate-400 truncate uppercase mt-0.5">Admin</p>
             </div>
+            <button
+              onClick={handleLogout}
+              className="absolute right-4 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 text-red-500 hover:text-red-600 transition-opacity bg-red-50 w-8 h-8 rounded-full flex items-center justify-center shadow-lg"
+              title="Log out"
+            >
+              <LogOut size={16} />
+            </button>
           </div>
         </div>
       </aside>
