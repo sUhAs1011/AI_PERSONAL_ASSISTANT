@@ -54,8 +54,22 @@ def _normalize_start_iso(value: str, timezone: str) -> str:
     return parsed_natural.astimezone(ZoneInfo(timezone)).isoformat()
 
 
-def _invalid_attendees(attendees: list[str]) -> list[str]:
-    return [email for email in attendees if not EMAIL_RE.match(email)]
+def _partition_attendees(attendees: list[str]) -> tuple[list[str], list[str], list[str]]:
+    valid_emails: list[str] = []
+    invalid_email_like: list[str] = []
+    non_email_tokens: list[str] = []
+    for raw in attendees:
+        token = raw.strip()
+        if not token:
+            continue
+        if "@" in token:
+            if EMAIL_RE.match(token):
+                valid_emails.append(token)
+            else:
+                invalid_email_like.append(token)
+        else:
+            non_email_tokens.append(token)
+    return valid_emails, invalid_email_like, non_email_tokens
 
 
 @tool
@@ -143,6 +157,7 @@ def book_event(
     attendees: list[str],
     send_invites: bool,
     add_meet_link: bool,
+    location: str | None = None,
 ) -> dict:
     """Book an event. Coerce non-ISO times, enforce stable output, never crash."""
     normalized_attendees = [
@@ -150,7 +165,7 @@ def book_event(
         for attendee in (attendees or [])
         if isinstance(attendee, str) and attendee.strip()
     ]
-    invalid_attendees = _invalid_attendees(normalized_attendees)
+    valid_attendees, invalid_attendees, non_email_tokens = _partition_attendees(normalized_attendees)
     if invalid_attendees:
         logger.warning(
             "tool.book_event.invalid_attendees user_id=%s count=%s",
@@ -165,6 +180,16 @@ def book_event(
             "start_iso": start_iso,
             "invalid_attendees": invalid_attendees,
         }
+
+    inferred_location = (location or "").strip() or None
+    if inferred_location is None and non_email_tokens:
+        inferred_location = ", ".join(non_email_tokens)
+        logger.info(
+            "tool.book_event.inferred_location user_id=%s location=%r non_email_tokens=%s",
+            user_id,
+            inferred_location,
+            len(non_email_tokens),
+        )
 
     try:
         start_iso = _normalize_start_iso(start_iso, timezone)
@@ -186,10 +211,12 @@ def book_event(
             "title": title,
             "start_iso": start_iso,
             "duration_minutes": duration_minutes,
-            "attendees": normalized_attendees,
+            "attendees": valid_attendees,
             "send_invites": send_invites,
             "add_google_meet": add_meet_link,
         }
+        if inferred_location:
+            payload["location"] = inferred_location
         created = _client().call_tool("mcp_google_calendar_create_event", payload)
         event_id = created.get("id")
         meet_link = (
@@ -202,7 +229,7 @@ def book_event(
             "event": {
                 "id": event_id,
                 "meet_link": meet_link,
-                "invite_status": "sent" if send_invites and normalized_attendees else "not_requested",
+                "invite_status": "sent" if send_invites and valid_attendees else "not_requested",
             },
         }
     except Exception as exc:
@@ -216,7 +243,7 @@ def book_event(
             "http_status": http_status,
             "title": title,
             "start_iso": start_iso,
-            "attendee_count": len(normalized_attendees),
+            "attendee_count": len(valid_attendees),
         }
 
 

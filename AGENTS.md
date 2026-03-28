@@ -177,3 +177,18 @@ npm run build
 - Added regression tests:
 - `tests/tools/test_calendar_proxy_coercion.py` (invalid datetime, invalid attendee, no sidecar add_attendee),
 - `tests/graph/test_finalizer_modes.py` (grounded error summary for action failures).
+
+## Recent Location + Attendee Parsing Fix
+- `app/tools/calendar_proxy.py` `book_event` now accepts optional `location`.
+- Attendee handling was refined:
+- valid emails are passed as `attendees`,
+- malformed email-like tokens (contain `@` but invalid) still hard-fail with `invalid_attendees`,
+- non-email tokens no longer fail booking and can be inferred as location when `location` is missing.
+- `app/services/calendar/mcp_client.py` create-event fallback now forwards `location` to calendar-mcp REST create endpoint.
+- `app/llm/prompts.py` now explicitly instructs:
+- use `location` for venue/place text,
+- use `attendees` only for email addresses.
+- `app/llm/schemas.py` `BookingIntent` now includes optional `location`.
+- Added regression tests:
+- `tests/tools/test_calendar_proxy_coercion.py` (non-email tokens infer location; explicit location passthrough),
+- `tests/services/test_mcp_client_compat.py` (create fallback includes location).

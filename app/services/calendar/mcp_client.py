@@ -66,6 +66,9 @@ class MCPClient:
                 "end": {"dateTime": end_iso},
                 "attendees": arguments.get("attendees", []),
             }
+            location = arguments.get("location")
+            if isinstance(location, str) and location.strip():
+                body["location"] = location.strip()
             resp = requests.post(
                 f"{self.base_url}/calendars/{calendar_id}/events",
                 params={"send_notifications": bool(arguments.get("send_invites", True))},

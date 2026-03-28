@@ -7,9 +7,9 @@ class BookingIntent(BaseModel):
     title: str = Field(default="meeting")
     start_iso: str | None = None
     duration_minutes: int = 30
+    location: str | None = None
     attendees: list[str] = Field(default_factory=list)
     send_invites: bool = False
     add_meet_link: bool = False
     event_id_to_cancel: str | None = None
     confidence: Literal["high", "low"] = "low"
-

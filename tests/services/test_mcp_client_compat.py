@@ -89,3 +89,36 @@ def test_fallback_query_free_busy_normalizes_free_windows(monkeypatch):
     assert result["free_windows"][0]["end_iso"] == "2026-03-28T10:00:00+05:30"
     assert result["free_windows"][1]["start_iso"] == "2026-03-28T11:00:00+05:30"
     assert result["free_windows"][1]["end_iso"] == "2026-03-28T12:00:00+05:30"
+
+
+def test_fallback_create_event_includes_location_when_present(monkeypatch):
+    calls: dict = {}
+
+    def fake_post(url, json=None, params=None, timeout=30):
+        if url.endswith("/tools/call"):
+            return _FakeResponse(status_code=404, text="not found")
+        calls["url"] = url
+        calls["json"] = json
+        calls["params"] = params
+        return _FakeResponse(status_code=201, payload={"id": "evt_1"})
+
+    monkeypatch.setattr("app.services.calendar.mcp_client.requests.post", fake_post)
+
+    client = MCPClient(base_url="http://127.0.0.1:8000")
+    out = client.call_tool(
+        "mcp_google_calendar_create_event",
+        {
+            "user_id": "u1",
+            "title": "Dinner Date",
+            "start_iso": "2026-03-28T20:00:00+05:30",
+            "duration_minutes": 60,
+            "attendees": ["alex@example.com"],
+            "location": "PlanB: Indiranagar",
+            "send_invites": True,
+        },
+    )
+
+    assert out["id"] == "evt_1"
+    assert calls["url"].endswith("/calendars/primary/events")
+    assert calls["json"]["location"] == "PlanB: Indiranagar"
+    assert calls["json"]["attendees"] == ["alex@example.com"]
