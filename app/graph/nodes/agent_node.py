@@ -13,6 +13,7 @@ from app.tools.calendar_proxy import (
     check_availability,
     find_events,
     get_event_duration,
+    update_event_duration,
     reschedule_event,
     schedule_mutual,
 )
@@ -29,6 +30,7 @@ calendar_action_tools = [
     find_events,
     schedule_mutual,
     cancel_event,
+    update_event_duration,
     reschedule_event,
 ]
 

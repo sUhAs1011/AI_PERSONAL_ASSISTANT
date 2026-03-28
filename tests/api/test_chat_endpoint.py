@@ -7,9 +7,10 @@ def test_chat_appends_history_and_returns_response(monkeypatch):
     class StubGraph:
         def invoke(self, state):
             return {
-                "summary": "✅ Design Review booked at 3:00 PM.",
+                "summary": "Design Review booked at 3:00 PM.",
                 "execution_result": {
                     "status": "created",
+                    "start_iso": "2026-03-28T15:00:00+05:30",
                     "event": {"id": "evt_1", "meet_link": "https://meet.google.com/abc"},
                 },
             }
@@ -31,4 +32,4 @@ def test_chat_appends_history_and_returns_response(monkeypatch):
     assert len(body["conversation_history"]) == 2
     assert body["latest_event_id"] == "evt_1"
     assert "event_id=evt_1" in body["conversation_history"][-1]["content"]
-
+    assert "start_iso=2026-03-28T15:00:00+05:30" in body["conversation_history"][-1]["content"]

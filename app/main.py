@@ -50,6 +50,11 @@ def _normalized_final_response(result: dict, default_response_mode: str) -> dict
     latest_event_id = final_response.get("latest_event_id")
     if latest_event_id is None and isinstance(event, dict):
         latest_event_id = event.get("id")
+    latest_start_iso = final_response.get("latest_start_iso")
+    if latest_start_iso is None and isinstance(execution_result, dict):
+        latest_start_iso = execution_result.get("start_iso")
+    if latest_start_iso is None and isinstance(event, dict):
+        latest_start_iso = event.get("start_iso")
 
     return {
         "status": status,
@@ -62,6 +67,7 @@ def _normalized_final_response(result: dict, default_response_mode: str) -> dict
         if "invite_status" in final_response
         else (event.get("invite_status") if isinstance(event, dict) else None),
         "latest_event_id": latest_event_id,
+        "latest_start_iso": latest_start_iso,
         "hitl_action_id": final_response.get("hitl_action_id", result.get("hitl_action_id")),
         "alternatives": final_response.get("alternatives", result.get("alternatives", [])),
     }
@@ -140,7 +146,13 @@ def chat(payload: ChatRequest) -> ChatResponse:
     summary = normalized["summary"]
     response_mode = normalized["response_mode"]
     latest_event_id = normalized["latest_event_id"]
-    assistant_text = f"{summary} [event_id={latest_event_id}]" if latest_event_id else summary
+    latest_start_iso = normalized.get("latest_start_iso")
+    if latest_event_id and latest_start_iso:
+        assistant_text = f"{summary} [event_id={latest_event_id} start_iso={latest_start_iso}]"
+    elif latest_event_id:
+        assistant_text = f"{summary} [event_id={latest_event_id}]"
+    else:
+        assistant_text = summary
     updated_history = [
         *payload.conversation_history,
         {"role": "user", "content": payload.message},

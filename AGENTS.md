@@ -211,3 +211,21 @@ npm run build
 - `tests/tools/test_event_duration_tool.py`,
 - updated `tests/graph/test_agent_tool_use_failure.py`,
 - updated `tests/graph/test_tool_result_node.py`.
+
+## Recent Duration-Only Update Support
+- Added new action proxy tool `update_event_duration` in `app/tools/calendar_proxy.py`:
+- updates only duration while keeping the same `start_iso`,
+- requires `event_id` and `current_start_iso`,
+- returns normalized `updated` payload with `event_id`, `start_iso`, and `duration_minutes`.
+- `book_event` now returns top-level `start_iso` in success payload so follow-up duration edits have stable context.
+- `app/graph/nodes/agent_node.py` now includes `update_event_duration` in action tool set.
+- `app/graph/nodes/tool_result_node.py` now treats `update_event_duration` as an action tool result.
+- `app/llm/prompts.py` now instructs the model to use `update_event_duration` for follow-ups like "make it 45 minutes", using history markers.
+- `app/main.py` now appends richer history markers when available:
+- `[event_id=... start_iso=...]` (instead of only event ID), preserving context for duration-only updates.
+- `app/graph/nodes/finalizer_node.py` now includes `latest_start_iso` in normalized final response metadata.
+- Added regression tests:
+- `tests/tools/test_update_event_duration_tool.py`,
+- updated `tests/api/test_chat_endpoint.py` (history marker includes `start_iso`),
+- updated `tests/e2e/test_pa_conversation_acceptance.py` (follow-up state contains `start_iso` marker),
+- updated `tests/graph/test_tool_result_node.py` and `tests/graph/test_agent_tool_use_failure.py`.

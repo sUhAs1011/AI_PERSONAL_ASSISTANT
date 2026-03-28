@@ -71,7 +71,11 @@ def test_follow_up_modification_uses_history_context():
                 return {
                     "response_mode": "calendar_action",
                     "summary": "Booked Design Review at 3 PM.",
-                    "execution_result": {"status": "created", "event": {"id": "evt_1"}},
+                    "execution_result": {
+                        "status": "created",
+                        "start_iso": "2026-03-28T15:00:00+05:30",
+                        "event": {"id": "evt_1"},
+                    },
                 }
             return {
                 "response_mode": "calendar_action",
@@ -107,5 +111,9 @@ def test_follow_up_modification_uses_history_context():
     second_state = stub.states[1]
     assert any(
         isinstance(msg, AIMessage) and "event_id=evt_1" in msg.content
+        for msg in second_state.get("messages", [])
+    )
+    assert any(
+        isinstance(msg, AIMessage) and "start_iso=2026-03-28T15:00:00+05:30" in msg.content
         for msg in second_state.get("messages", [])
     )

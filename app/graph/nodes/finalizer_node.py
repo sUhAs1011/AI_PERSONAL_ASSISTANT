@@ -82,6 +82,9 @@ def _build_final_response(
     event = result.get("event", {}) if isinstance(result, dict) else {}
     status = result.get("status", "ok") if isinstance(result, dict) else "ok"
     latest_event_id = event.get("id") if isinstance(event, dict) else None
+    latest_start_iso = result.get("start_iso") if isinstance(result, dict) else None
+    if latest_start_iso is None and isinstance(event, dict):
+        latest_start_iso = event.get("start_iso")
     out = {
         "status": status,
         "summary": summary,
@@ -89,6 +92,7 @@ def _build_final_response(
         "meet_link": event.get("meet_link") if isinstance(event, dict) else None,
         "invite_status": event.get("invite_status") if isinstance(event, dict) else None,
         "latest_event_id": latest_event_id,
+        "latest_start_iso": latest_start_iso,
         "hitl_action_id": hitl_action_id,
         "alternatives": alternatives if isinstance(alternatives, list) else result.get("alternatives", []),
     }

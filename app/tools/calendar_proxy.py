@@ -362,6 +362,7 @@ def book_event(
         )
         return {
             "status": "created",
+            "start_iso": start_iso,
             "event": {
                 "id": event_id,
                 "meet_link": meet_link,
@@ -380,6 +381,70 @@ def book_event(
             "title": title,
             "start_iso": start_iso,
             "attendee_count": len(valid_attendees),
+        }
+
+
+@tool
+def update_event_duration(
+    user_id: str,
+    timezone: str,
+    event_id: str,
+    current_start_iso: str,
+    duration_minutes: int,
+) -> dict:
+    """Update only event duration while keeping start time unchanged. Requires event_id and the existing start time."""
+    try:
+        start_iso = _normalize_start_iso(current_start_iso, timezone)
+    except Exception:
+        logger.exception(
+            "tool.update_event_duration.invalid_datetime user_id=%s event_id=%s current_start_iso=%r",
+            user_id,
+            event_id,
+            current_start_iso,
+        )
+        return {
+            "status": "error",
+            "error_code": "invalid_datetime",
+            "error": "Could not parse current_start_iso for duration update.",
+            "event_id": event_id,
+            "start_iso": current_start_iso,
+        }
+
+    try:
+        logger.info(
+            "tool.update_event_duration.start user_id=%s event_id=%s start_iso=%s duration_minutes=%s",
+            user_id,
+            event_id,
+            start_iso,
+            duration_minutes,
+        )
+        raw = _client().call_tool(
+            "mcp_google_calendar_update_event",
+            {
+                "user_id": user_id,
+                "event_id": event_id,
+                "start_iso": start_iso,
+                "duration_minutes": duration_minutes,
+            },
+        )
+        out_event_id = raw.get("id") if isinstance(raw, dict) else None
+        return {
+            "status": "updated",
+            "event": {"id": out_event_id or event_id},
+            "event_id": out_event_id or event_id,
+            "start_iso": start_iso,
+            "duration_minutes": duration_minutes,
+            "raw": raw,
+        }
+    except Exception as exc:
+        logger.exception("tool.update_event_duration.error user_id=%s event_id=%s", user_id, event_id)
+        return {
+            "status": "error",
+            "error_code": "calendar_api_error",
+            "error": str(exc),
+            "event_id": event_id,
+            "start_iso": start_iso,
+            "duration_minutes": duration_minutes,
         }
 
 

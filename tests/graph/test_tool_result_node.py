@@ -72,3 +72,28 @@ def test_get_event_duration_tool_message_populates_execution_result():
     assert result["execution_result"]["status"] == "ok"
     assert result["execution_result"]["duration_minutes"] == 90
     assert "Dinner Date" in result["execution_result"]["summary"]
+
+
+def test_update_event_duration_tool_message_populates_action_execution_result():
+    state = {
+        "messages": [
+            ToolMessage(
+                content=json.dumps(
+                    {
+                        "status": "updated",
+                        "event": {"id": "evt_42"},
+                        "event_id": "evt_42",
+                        "start_iso": "2026-03-28T20:00:00+05:30",
+                        "duration_minutes": 45,
+                    }
+                ),
+                tool_call_id="call_4",
+                name="update_event_duration",
+            )
+        ]
+    }
+    result = tool_result_node(state)
+    assert result["response_mode"] == "calendar_action"
+    assert result["execution_result"]["status"] == "updated"
+    assert result["execution_result"]["event"]["id"] == "evt_42"
+    assert result["execution_result"]["duration_minutes"] == 45

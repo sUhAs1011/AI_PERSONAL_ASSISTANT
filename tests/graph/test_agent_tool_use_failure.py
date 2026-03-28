@@ -126,3 +126,4 @@ def test_agent_node_uses_action_tool_subset(monkeypatch):
 
     assert result["response_mode"] == "calendar_action"
     assert "book_event" in captured["tool_names"]
+    assert "update_event_duration" in captured["tool_names"]

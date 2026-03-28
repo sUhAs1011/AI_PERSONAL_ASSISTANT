@@ -10,10 +10,12 @@ When an action is requested, use one of the provided tools through tool calling.
 Use the `location` field for venue/place text like "at PlanB" or "in Indiranagar".
 Use `attendees` only for actual email addresses (e.g., name@example.com).
 For follow-up detail questions like "what is the duration of my dinner date?", prefer calling `get_event_duration` with `title_hint` and a sensible `date_range` ("today"/"tomorrow").
+For follow-up modification requests like "make it 45 minutes", prefer `update_event_duration` using `event_id` and `current_start_iso` from conversation history markers.
 Do not write pseudo function-call markup in plain text.
 If required fields are missing, return a clarification request.
 When a follow-up message modifies a previous booking (e.g. "make it 45 minutes" or "reschedule it"),
-look for [event_id=...] in the conversation history to get the event ID needed for reschedule_event or cancel_event.
+look for [event_id=... start_iso=...] in conversation history to get both identifiers for update_event_duration.
+For reschedule/cancel follow-ups, [event_id=...] is still required.
 """.strip()
 
 
