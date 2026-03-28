@@ -30,7 +30,7 @@ flowchart LR
     subgraph T["Calendar Tools (via ToolNode)"]
       direction TB
       Q["Query: find_events, check_availability,<br/>get_event_duration, get_event_location"]
-      ACT["Action: book_event (overlap guard + alternatives),<br/>reschedule_event, cancel_event,<br/>update_event_duration, update_event_location,<br/>schedule_mutual"]
+      ACT["Action: book_event (overlap guard + alternatives),<br/>reschedule_event, cancel_event (id/hint resolve),<br/>update_event_duration, update_event_location,<br/>schedule_mutual"]
       MCP["MCPClient<br/>/tools/call -> REST fallback"]
       Q --> MCP
       ACT --> MCP

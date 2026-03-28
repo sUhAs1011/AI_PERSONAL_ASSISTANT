@@ -313,3 +313,13 @@ npm run build
 - Added regression tests:
   - `tests/tools/test_calendar_proxy_coercion.py` (conflict path blocks create + returns alternatives),
   - `tests/graph/test_tool_result_node.py` (book_event conflict alternatives preserved for HITL).
+
+## Recent Cancel Event Reliability Fix
+- `app/tools/calendar_proxy.py` `cancel_event` now resolves concrete event ids before delete using:
+  - cached event metadata id,
+  - `event_cache.resolve_event_id` alias lookup,
+  - fallback title-hint search (`find_events` + best-match) when initial delete fails with hint-like ids.
+- `cancel_event` retry path now preserves grounded metadata (`title`, `start_iso`, `location`) from resolved event when cancellation succeeds.
+- `_looks_like_title_hint` now treats underscore/time-suffixed references (e.g. `vet_appointment_6pm`) as hint-like for safe retry resolution.
+- Added regression test:
+  - `tests/tools/test_cancel_event_tool.py::test_cancel_event_retries_with_resolved_id_after_hint_delete_failure`.

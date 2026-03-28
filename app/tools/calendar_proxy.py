@@ -197,8 +197,12 @@ def _looks_like_title_hint(value: str) -> bool:
         return False
     if " " in token:
         return True
+    if "_" in token and any(ch.isalpha() for ch in token):
+        return True
     if token.startswith("evt_"):
         return False
+    if re.search(r"\b\d{1,2}\s*(am|pm)\b", token.lower()):
+        return True
     if any(ch.isdigit() for ch in token):
         return False
     if "-" in token or "@" in token or "." in token:
@@ -242,6 +246,36 @@ def _resolve_event_id_near_start(
             user_id,
             title_hint,
             start_iso,
+        )
+        return None
+
+
+def _resolve_event_by_title_hint(user_id: str, timezone: str, title_hint: str) -> dict | None:
+    try:
+        now_local = datetime.now(ZoneInfo(timezone))
+        window_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+        window_end = window_start + timedelta(days=2)
+        raw = _client().call_tool(
+            "mcp_google_calendar_find_events",
+            {
+                "user_id": user_id,
+                "start_iso": window_start.isoformat(),
+                "end_iso": window_end.isoformat(),
+            },
+        )
+        events = raw.get("events", []) if isinstance(raw, dict) else []
+        matched = _pick_best_event(events=events, title_hint=title_hint.replace("_", " "))
+        if not isinstance(matched, dict):
+            return None
+        resolved_id = matched.get("id")
+        if not isinstance(resolved_id, str) or not resolved_id.strip():
+            return None
+        return matched
+    except Exception:
+        logger.exception(
+            "tool.cancel_event.resolve_id_failed user_id=%s title_hint=%r",
+            user_id,
+            title_hint,
         )
         return None
 
@@ -924,13 +958,47 @@ def cancel_event(user_id: str, event_id: str, timezone: str = "Asia/Kolkata") ->
     except Exception:
         logger.exception("tool.cancel_event.cache_lookup_failed user_id=%s event_id=%s", user_id, event_id)
 
+    resolved_event_id = event_id
+    if isinstance(cached_event, dict):
+        cached_id = cached_event.get("id")
+        if isinstance(cached_id, str) and cached_id.strip():
+            resolved_event_id = cached_id.strip()
+    else:
+        try:
+            resolve_id_fn = getattr(event_cache, "resolve_event_id", None)
+            if callable(resolve_id_fn):
+                cache_resolved = resolve_id_fn(
+                    user_id=user_id,
+                    timezone=timezone,
+                    event_ref_or_hint=event_id,
+                )
+                if isinstance(cache_resolved, str) and cache_resolved.strip():
+                    resolved_event_id = cache_resolved.strip()
+                    logger.info(
+                        "tool.cancel_event.resolve_id_cache_hit user_id=%s event_id=%s resolved_event_id=%s",
+                        user_id,
+                        event_id,
+                        resolved_event_id,
+                    )
+        except Exception:
+            logger.exception(
+                "tool.cancel_event.resolve_id_cache_failed user_id=%s event_id=%s",
+                user_id,
+                event_id,
+            )
+
     try:
-        logger.info("tool.cancel_event.start user_id=%s event_id=%s", user_id, event_id)
+        logger.info(
+            "tool.cancel_event.start user_id=%s event_id=%s resolved_event_id=%s",
+            user_id,
+            event_id,
+            resolved_event_id,
+        )
         raw = _client().call_tool(
             "mcp_google_calendar_delete_event",
-            {"user_id": user_id, "event_id": event_id},
+            {"user_id": user_id, "event_id": resolved_event_id},
         )
-        out = {"status": "cancelled", "event_id": event_id, "raw": raw}
+        out = {"status": "cancelled", "event_id": resolved_event_id, "raw": raw}
         if isinstance(cached_event, dict):
             title = cached_event.get("summary") or cached_event.get("title")
             start_iso = cached_event.get("start_iso")
@@ -942,15 +1010,55 @@ def cancel_event(user_id: str, event_id: str, timezone: str = "Asia/Kolkata") ->
             if isinstance(location, str):
                 out["location"] = location.strip()
         logger.info(
-            "tool.cancel_event.done user_id=%s event_id=%s has_title=%s has_start=%s",
+            "tool.cancel_event.done user_id=%s event_id=%s resolved_event_id=%s has_title=%s has_start=%s",
             user_id,
             event_id,
+            resolved_event_id,
             bool(out.get("title")),
             bool(out.get("start_iso")),
         )
         return out
     except Exception as exc:
         logger.exception("tool.cancel_event.error user_id=%s event_id=%s", user_id, event_id)
+        if resolved_event_id == event_id and _looks_like_title_hint(event_id):
+            resolved_event = _resolve_event_by_title_hint(
+                user_id=user_id,
+                timezone=timezone,
+                title_hint=event_id,
+            )
+            if isinstance(resolved_event, dict):
+                retry_id = resolved_event.get("id")
+                if isinstance(retry_id, str) and retry_id.strip():
+                    retry_id = retry_id.strip()
+                    try:
+                        logger.info(
+                            "tool.cancel_event.retry_with_resolved_id user_id=%s event_id=%s resolved_event_id=%s",
+                            user_id,
+                            event_id,
+                            retry_id,
+                        )
+                        raw = _client().call_tool(
+                            "mcp_google_calendar_delete_event",
+                            {"user_id": user_id, "event_id": retry_id},
+                        )
+                        retry_start, _retry_end = _event_start_end(resolved_event, timezone)
+                        retry_title = resolved_event.get("summary") or resolved_event.get("title")
+                        retry_location = resolved_event.get("location")
+                        out = {"status": "cancelled", "event_id": retry_id, "raw": raw}
+                        if isinstance(retry_title, str) and retry_title.strip():
+                            out["title"] = retry_title.strip()
+                        if retry_start is not None:
+                            out["start_iso"] = retry_start.isoformat()
+                        if isinstance(retry_location, str):
+                            out["location"] = retry_location.strip()
+                        return out
+                    except Exception:
+                        logger.exception(
+                            "tool.cancel_event.retry_failed user_id=%s event_id=%s resolved_event_id=%s",
+                            user_id,
+                            event_id,
+                            retry_id,
+                        )
         return {"status": "error", "error": str(exc), "event_id": event_id}
 
 
