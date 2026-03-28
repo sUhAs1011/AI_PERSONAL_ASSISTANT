@@ -323,3 +323,13 @@ npm run build
 - `_looks_like_title_hint` now treats underscore/time-suffixed references (e.g. `vet_appointment_6pm`) as hint-like for safe retry resolution.
 - Added regression test:
   - `tests/tools/test_cancel_event_tool.py::test_cancel_event_retries_with_resolved_id_after_hint_delete_failure`.
+
+## Recent Reschedule Event Reliability Fix
+- `app/tools/calendar_proxy.py` `reschedule_event` now resolves concrete event ids before update using:
+  - cached event metadata id,
+  - `event_cache.resolve_event_id` alias lookup,
+  - fallback title-hint search (`find_events` + best-match) when initial update fails with hint-like ids.
+- `reschedule_event` now returns normalized structured payloads on success (`event`, `event_id`, `start_iso`, `duration_minutes`) for finalizer consistency.
+- When hint resolution fails, `reschedule_event` now returns structured `event_not_found` errors instead of generic raw exceptions.
+- Added regression tests:
+  - `tests/tools/test_reschedule_event_tool.py`.

@@ -1071,6 +1071,7 @@ def reschedule_event(
     duration_minutes: int,
 ) -> dict:
     """Reschedule an event to a new time. Coerce natural language time to ISO and return normalized event payload."""
+    resolved_event_id = event_id
     try:
         logger.info("tool.reschedule_event.start user_id=%s event_id=%s new_start_iso=%s", user_id, event_id, new_start_iso)
         if "T" not in new_start_iso:
@@ -1078,16 +1079,120 @@ def reschedule_event(
             coerced = parse_natural_time(new_start_iso, timezone, now=now)
             new_start_iso = coerced.isoformat()
             logger.info("tool.reschedule_event.coerced_start user_id=%s event_id=%s start_iso=%s", user_id, event_id, new_start_iso)
+
+        try:
+            cached_event = event_cache.get_event_by_reference(
+                user_id=user_id,
+                timezone=timezone,
+                event_ref_or_hint=event_id,
+            )
+            if isinstance(cached_event, dict):
+                cached_id = cached_event.get("id")
+                if isinstance(cached_id, str) and cached_id.strip():
+                    resolved_event_id = cached_id.strip()
+                    logger.info(
+                        "tool.reschedule_event.resolve_id_cache_lookup user_id=%s event_id=%s resolved_event_id=%s",
+                        user_id,
+                        event_id,
+                        resolved_event_id,
+                    )
+            else:
+                resolve_id_fn = getattr(event_cache, "resolve_event_id", None)
+                if callable(resolve_id_fn):
+                    cache_resolved = resolve_id_fn(
+                        user_id=user_id,
+                        timezone=timezone,
+                        event_ref_or_hint=event_id,
+                    )
+                    if isinstance(cache_resolved, str) and cache_resolved.strip():
+                        resolved_event_id = cache_resolved.strip()
+                        logger.info(
+                            "tool.reschedule_event.resolve_id_cache_alias user_id=%s event_id=%s resolved_event_id=%s",
+                            user_id,
+                            event_id,
+                            resolved_event_id,
+                        )
+        except Exception:
+            logger.exception(
+                "tool.reschedule_event.resolve_id_cache_failed user_id=%s event_id=%s",
+                user_id,
+                event_id,
+            )
+
         raw = _client().call_tool(
             "mcp_google_calendar_update_event",
             {
                 "user_id": user_id,
-                "event_id": event_id,
+                "event_id": resolved_event_id,
                 "start_iso": new_start_iso,
                 "duration_minutes": duration_minutes,
             },
         )
-        return {"status": "updated", "event": raw, "start_iso": new_start_iso}
+        out_event_id = raw.get("id") if isinstance(raw, dict) else None
+        return {
+            "status": "updated",
+            "event": {"id": out_event_id or resolved_event_id},
+            "event_id": out_event_id or resolved_event_id,
+            "start_iso": new_start_iso,
+            "duration_minutes": duration_minutes,
+            "raw": raw,
+        }
     except Exception as exc:
         logger.exception("tool.reschedule_event.error user_id=%s event_id=%s", user_id, event_id)
-        return {"status": "error", "error": str(exc)}
+        if resolved_event_id == event_id and _looks_like_title_hint(event_id):
+            resolved_event = _resolve_event_by_title_hint(
+                user_id=user_id,
+                timezone=timezone,
+                title_hint=event_id,
+            )
+            if isinstance(resolved_event, dict):
+                retry_id = resolved_event.get("id")
+                if isinstance(retry_id, str) and retry_id.strip():
+                    retry_id = retry_id.strip()
+                    try:
+                        logger.info(
+                            "tool.reschedule_event.retry_with_resolved_id user_id=%s old_event_id=%s new_event_id=%s",
+                            user_id,
+                            event_id,
+                            retry_id,
+                        )
+                        raw = _client().call_tool(
+                            "mcp_google_calendar_update_event",
+                            {
+                                "user_id": user_id,
+                                "event_id": retry_id,
+                                "start_iso": new_start_iso,
+                                "duration_minutes": duration_minutes,
+                            },
+                        )
+                        out_event_id = raw.get("id") if isinstance(raw, dict) else None
+                        return {
+                            "status": "updated",
+                            "event": {"id": out_event_id or retry_id},
+                            "event_id": out_event_id or retry_id,
+                            "start_iso": new_start_iso,
+                            "duration_minutes": duration_minutes,
+                            "raw": raw,
+                        }
+                    except Exception:
+                        logger.exception(
+                            "tool.reschedule_event.retry_failed user_id=%s resolved_event_id=%s",
+                            user_id,
+                            retry_id,
+                        )
+            return {
+                "status": "error",
+                "error_code": "event_not_found",
+                "error": "Could not resolve a concrete event id for reschedule.",
+                "event_id": event_id,
+                "start_iso": new_start_iso,
+                "duration_minutes": duration_minutes,
+            }
+        return {
+            "status": "error",
+            "error_code": "calendar_api_error",
+            "error": str(exc),
+            "event_id": resolved_event_id,
+            "start_iso": new_start_iso,
+            "duration_minutes": duration_minutes,
+        }
