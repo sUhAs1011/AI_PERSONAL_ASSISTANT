@@ -84,6 +84,11 @@ const ChatPage = ({ messages, setMessages, conversationHistory, setConversationH
   const [isSending, setIsSending] = useState(false)
   const [isListening, setIsListening] = useState(false)
   const recognitionRef = useRef(null)
+  const messagesEndRef = useRef(null)
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages, isSending])
 
   useEffect(() => {
     if (typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition)) {
@@ -256,6 +261,23 @@ const ChatPage = ({ messages, setMessages, conversationHistory, setConversationH
             </div>
           </motion.div>
         ))}
+        {isSending && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className={`flex justify-start gap-5`}
+          >
+            <div className="w-10 h-10 bg-brand rounded-2xl flex items-center justify-center text-white shrink-0 shadow-lg shadow-brand/20">
+              <Zap size={20} fill="currentColor" />
+            </div>
+            <div className="premium-card p-6 max-w-[80%] shadow-xl shadow-slate-100/50 flex items-center gap-1.5 min-h-[50px]">
+              <motion.div className="w-2 h-2 rounded-full bg-slate-300" animate={{ y: [0, -4, 0] }} transition={{ repeat: Infinity, duration: 0.6, ease: "easeInOut", delay: 0 }} />
+              <motion.div className="w-2 h-2 rounded-full bg-slate-300" animate={{ y: [0, -4, 0] }} transition={{ repeat: Infinity, duration: 0.6, ease: "easeInOut", delay: 0.2 }} />
+              <motion.div className="w-2 h-2 rounded-full bg-slate-300" animate={{ y: [0, -4, 0] }} transition={{ repeat: Infinity, duration: 0.6, ease: "easeInOut", delay: 0.4 }} />
+            </div>
+          </motion.div>
+        )}
+        <div ref={messagesEndRef} />
       </div>
 
       <div className="mt-8 bg-white border border-slate-100 p-4 rounded-[32px] flex items-center gap-4 shadow-2xl shadow-slate-200/50 max-w-4xl mx-auto w-full relative">
