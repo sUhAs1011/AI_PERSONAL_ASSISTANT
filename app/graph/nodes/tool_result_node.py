@@ -91,7 +91,13 @@ def tool_result_node(state: dict) -> dict:
             "execution_result": {"status": "ok", "alternatives": [], "tool": tool_name},
         }
 
-    if tool_name in {"book_event", "reschedule_event", "update_event_duration", "cancel_event"}:
+    if tool_name in {
+        "book_event",
+        "reschedule_event",
+        "update_event_duration",
+        "update_event_location",
+        "cancel_event",
+    }:
         status = content.get("status", "ok")
         logger.info("tool_result.action trace_id=%s tool=%s status=%s", trace_id, tool_name, status)
         return {

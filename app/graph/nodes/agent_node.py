@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import datetime
 
 from groq import BadRequestError
@@ -13,6 +14,7 @@ from app.tools.calendar_proxy import (
     check_availability,
     find_events,
     get_event_duration,
+    update_event_location,
     update_event_duration,
     reschedule_event,
     schedule_mutual,
@@ -30,6 +32,7 @@ calendar_action_tools = [
     find_events,
     schedule_mutual,
     cancel_event,
+    update_event_location,
     update_event_duration,
     reschedule_event,
 ]
@@ -39,6 +42,9 @@ proxy_tools = [
     *[tool for tool in calendar_action_tools if tool not in calendar_query_tools],
 ]
 logger = logging.getLogger(__name__)
+EVENT_MARKER_RE = re.compile(
+    r"\[event_id=(?P<event_id>[^\s\]]+)(?:\s+start_iso=(?P<start_iso>[^\]]+))?\]"
+)
 
 
 def _is_tool_use_failed(exc: Exception) -> bool:
@@ -72,6 +78,173 @@ def _clarification_for_mode(mode: ConversationMode) -> str:
     if mode == ConversationMode.CALENDAR_ACTION:
         return "Please rephrase your request with explicit date, time, and attendees."
     return "Please rephrase your request."
+
+
+def _extract_latest_event_marker(state_messages: list) -> tuple[str | None, str | None]:
+    for message in reversed(state_messages):
+        content = getattr(message, "content", None)
+        if not isinstance(content, str):
+            continue
+        matches = list(EVENT_MARKER_RE.finditer(content))
+        if not matches:
+            continue
+        latest = matches[-1]
+        return latest.group("event_id"), latest.group("start_iso")
+    return None, None
+
+
+def _is_suspicious_event_id(value: str | None) -> bool:
+    if not isinstance(value, str):
+        return True
+    text = value.strip()
+    if not text:
+        return True
+    if " " in text:
+        return True
+    if text.startswith("evt_"):
+        return False
+    if any(ch.isdigit() for ch in text):
+        return False
+    if "-" in text or "@" in text or "." in text:
+        return False
+    return True
+
+
+def _is_location_update_followup(user_message: str) -> bool:
+    text = (user_message or "").strip().lower()
+    if not text:
+        return False
+    has_location_word = any(token in text for token in ("location", "venue", "address", "place"))
+    if not has_location_word:
+        return False
+    has_update_word = any(token in text for token in ("add", "update", "change", "set", "also"))
+    if not has_update_word:
+        return False
+    if any(token in text for token in ("book ", "schedule ", "create ", "new event", "another event")):
+        return False
+    return True
+
+
+def _sanitize_tool_calls(
+    tool_calls: list[dict],
+    state_user_id: str | None,
+    timezone: str,
+    marker_event_id: str | None,
+    marker_start_iso: str | None,
+    latest_user_message: str,
+) -> tuple[list[dict], str | None]:
+    sanitized: list[dict] = []
+    for call in tool_calls:
+        if not isinstance(call, dict):
+            sanitized.append(call)
+            continue
+        name = str(call.get("name") or "")
+        args_obj = call.get("args") or {}
+        args = dict(args_obj) if isinstance(args_obj, dict) else {}
+
+        if name in {
+            "book_event",
+            "find_events",
+            "check_availability",
+            "schedule_mutual",
+            "cancel_event",
+            "update_event_location",
+            "reschedule_event",
+            "get_event_duration",
+            "update_event_duration",
+        } and state_user_id:
+            args["user_id"] = state_user_id
+
+        if name in {
+            "book_event",
+            "check_availability",
+            "schedule_mutual",
+            "update_event_location",
+            "reschedule_event",
+            "get_event_duration",
+            "update_event_duration",
+        }:
+            args["timezone"] = timezone
+
+        if (
+            name == "book_event"
+            and marker_event_id
+            and _is_location_update_followup(latest_user_message)
+        ):
+            location = args.get("location")
+            if not isinstance(location, str) or not location.strip():
+                return (
+                    sanitized,
+                    "I can update the event location, but I need the venue text to continue.",
+                )
+            if not isinstance(marker_start_iso, str) or not marker_start_iso.strip():
+                return (
+                    sanitized,
+                    "I found the event but need its current start time context. Please mention the day/time once.",
+                )
+            rewritten = dict(call)
+            rewritten["name"] = "update_event_location"
+            rewritten["args"] = {
+                "user_id": state_user_id,
+                "timezone": timezone,
+                "event_id": marker_event_id,
+                "current_start_iso": marker_start_iso,
+                "location": location.strip(),
+            }
+            sanitized.append(rewritten)
+            continue
+
+        if name in {"cancel_event", "reschedule_event"} and marker_event_id:
+            args["event_id"] = marker_event_id
+
+        if name == "update_event_location":
+            if marker_event_id:
+                args["event_id"] = marker_event_id
+            if marker_start_iso:
+                args["current_start_iso"] = marker_start_iso
+
+            event_id = args.get("event_id")
+            current_start_iso = args.get("current_start_iso")
+            location = args.get("location")
+            if _is_suspicious_event_id(event_id):
+                return (
+                    sanitized,
+                    "I couldn't find the exact event reference to update location. Please confirm the event.",
+                )
+            if not isinstance(current_start_iso, str) or not current_start_iso.strip():
+                return (
+                    sanitized,
+                    "I found the event but need its current start time context. Please mention the day/time once.",
+                )
+            if not isinstance(location, str) or not location.strip():
+                return (
+                    sanitized,
+                    "Please share the location text you want me to set for this event.",
+                )
+
+        if name == "update_event_duration":
+            if marker_event_id:
+                args["event_id"] = marker_event_id
+            if marker_start_iso:
+                args["current_start_iso"] = marker_start_iso
+
+            event_id = args.get("event_id")
+            current_start_iso = args.get("current_start_iso")
+            if _is_suspicious_event_id(event_id):
+                return (
+                    sanitized,
+                    "I couldn't find the exact event reference to update duration. Please confirm the event.",
+                )
+            if not isinstance(current_start_iso, str) or not current_start_iso.strip():
+                return (
+                    sanitized,
+                    "I found the event but need its current start time context. Please mention the day/time once.",
+                )
+
+        sanitized_call = dict(call)
+        sanitized_call["args"] = args
+        sanitized.append(sanitized_call)
+    return sanitized, None
 
 
 def agent_node(state: dict) -> dict:
@@ -133,6 +306,7 @@ def agent_node(state: dict) -> dict:
         now_iso=datetime.now().astimezone().isoformat(),
         timezone=timezone,
         no_meetings_before_hour=no_meetings_before_hour,
+        user_id=state.get("user_id"),
     )
     messages = [SystemMessage(content=system_prompt), *state_messages]
     try:
@@ -173,6 +347,40 @@ def agent_node(state: dict) -> dict:
         len(tool_calls),
         [call.get("name") for call in tool_calls if isinstance(call, dict)],
     )
+    if tool_calls:
+        marker_event_id, marker_start_iso = _extract_latest_event_marker(state_messages)
+        sanitized_calls, clarification = _sanitize_tool_calls(
+            tool_calls=tool_calls,
+            state_user_id=state.get("user_id"),
+            timezone=timezone,
+            marker_event_id=marker_event_id,
+            marker_start_iso=marker_start_iso,
+            latest_user_message=latest_user_message,
+        )
+        if clarification:
+            return {
+                "iteration_count": state.get("iteration_count", 0) + 1,
+                "pending_clarification": clarification,
+                "summary": clarification,
+                "response_mode": route.mode.value,
+                "execution_result": {
+                    "status": "error",
+                    "error_code": "missing_event_context",
+                    "error": clarification,
+                },
+            }
+        if sanitized_calls != tool_calls:
+            logger.info(
+                "agent.sanitize_tool_calls trace_id=%s marker_event_id=%s marker_start_iso=%s",
+                trace_id,
+                marker_event_id,
+                marker_start_iso,
+            )
+            if hasattr(response, "model_copy"):
+                response = response.model_copy(update={"tool_calls": sanitized_calls})
+            else:
+                response.tool_calls = sanitized_calls
+
     update: dict = {
         "messages": [response],
         "iteration_count": state.get("iteration_count", 0) + 1,

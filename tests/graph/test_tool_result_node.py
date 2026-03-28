@@ -97,3 +97,28 @@ def test_update_event_duration_tool_message_populates_action_execution_result():
     assert result["execution_result"]["status"] == "updated"
     assert result["execution_result"]["event"]["id"] == "evt_42"
     assert result["execution_result"]["duration_minutes"] == 45
+
+
+def test_update_event_location_tool_message_populates_action_execution_result():
+    state = {
+        "messages": [
+            ToolMessage(
+                content=json.dumps(
+                    {
+                        "status": "updated",
+                        "event": {"id": "evt_42"},
+                        "event_id": "evt_42",
+                        "start_iso": "2026-03-28T20:00:00+05:30",
+                        "location": "Pizza Bakery indiranagar",
+                    }
+                ),
+                tool_call_id="call_5",
+                name="update_event_location",
+            )
+        ]
+    }
+    result = tool_result_node(state)
+    assert result["response_mode"] == "calendar_action"
+    assert result["execution_result"]["status"] == "updated"
+    assert result["execution_result"]["event"]["id"] == "evt_42"
+    assert result["execution_result"]["location"] == "Pizza Bakery indiranagar"

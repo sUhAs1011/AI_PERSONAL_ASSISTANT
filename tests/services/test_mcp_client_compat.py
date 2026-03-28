@@ -122,3 +122,34 @@ def test_fallback_create_event_includes_location_when_present(monkeypatch):
     assert calls["url"].endswith("/calendars/primary/events")
     assert calls["json"]["location"] == "PlanB: Indiranagar"
     assert calls["json"]["attendees"] == ["alex@example.com"]
+
+
+def test_fallback_update_event_supports_location_only_patch(monkeypatch):
+    calls: dict = {}
+
+    def fake_post(url, json=None, timeout=30):
+        if url.endswith("/tools/call"):
+            return _FakeResponse(status_code=404, text="not found")
+        raise AssertionError(f"Unexpected POST URL: {url}")
+
+    def fake_patch(url, json=None, timeout=30):
+        calls["url"] = url
+        calls["json"] = json
+        return _FakeResponse(status_code=200, payload={"id": "evt_42", "location": "Pizza Bakery indiranagar"})
+
+    monkeypatch.setattr("app.services.calendar.mcp_client.requests.post", fake_post)
+    monkeypatch.setattr("app.services.calendar.mcp_client.requests.patch", fake_patch)
+
+    client = MCPClient(base_url="http://127.0.0.1:8000")
+    out = client.call_tool(
+        "mcp_google_calendar_update_event",
+        {
+            "user_id": "u1",
+            "event_id": "evt_42",
+            "location": "Pizza Bakery indiranagar",
+        },
+    )
+
+    assert out["id"] == "evt_42"
+    assert calls["url"].endswith("/calendars/primary/events/evt_42")
+    assert calls["json"] == {"location": "Pizza Bakery indiranagar"}

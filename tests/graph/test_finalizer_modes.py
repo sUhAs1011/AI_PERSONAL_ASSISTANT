@@ -124,3 +124,20 @@ def test_finalizer_error_summary_is_grounded_and_not_successful(monkeypatch):
     assert "sorry" in summary
     assert "couldn't" in summary
     assert "booked successfully" not in summary
+
+
+def test_finalizer_event_not_found_error_is_specific():
+    out = finalizer_node(
+        {
+            "timezone": "Asia/Kolkata",
+            "response_mode": "calendar_action",
+            "execution_result": {
+                "status": "error",
+                "error_code": "event_not_found",
+                "event_id": "dinner_date",
+                "start_iso": "2026-03-28T20:00:00+05:30",
+            },
+        }
+    )
+    summary = out["summary"].lower()
+    assert "confirm the event" in summary

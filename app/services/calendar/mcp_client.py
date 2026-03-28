@@ -100,12 +100,32 @@ class MCPClient:
             return {"status": "cancelled", "event_id": arguments["event_id"]}
 
         if tool_name == "mcp_google_calendar_update_event":
-            new_start_iso = arguments["start_iso"]
-            duration = int(arguments.get("duration_minutes", 30))
-            end_iso = self._compute_end_iso(start_iso=new_start_iso, duration_minutes=duration)
+            patch_body: dict = {}
+            if "start_iso" in arguments:
+                new_start_iso = arguments["start_iso"]
+                duration = int(arguments.get("duration_minutes", 30))
+                end_iso = self._compute_end_iso(start_iso=new_start_iso, duration_minutes=duration)
+                patch_body["start"] = {"dateTime": new_start_iso}
+                patch_body["end"] = {"dateTime": end_iso}
+
+            location = arguments.get("location")
+            if isinstance(location, str) and location.strip():
+                patch_body["location"] = location.strip()
+
+            summary = arguments.get("title")
+            if isinstance(summary, str) and summary.strip():
+                patch_body["summary"] = summary.strip()
+
+            description = arguments.get("description")
+            if isinstance(description, str) and description.strip():
+                patch_body["description"] = description.strip()
+
+            if not patch_body:
+                raise ValueError("mcp_google_calendar_update_event fallback requires at least one update field")
+
             resp = requests.patch(
                 f"{self.base_url}/calendars/{calendar_id}/events/{arguments['event_id']}",
-                json={"start": {"dateTime": new_start_iso}, "end": {"dateTime": end_iso}},
+                json=patch_body,
                 timeout=self.timeout_sec,
             )
             resp.raise_for_status()

@@ -1,53 +1,47 @@
-flowchart TD;
-    U["User message + conversation_history + timezone"] --> CHAT["/chat"];
-    CHAT --> S["Build AgentState<br/>messages + preferences + trace_id"];
-    S --> START(("LangGraph START"));
+flowchart LR
+    U["User"] --> CHAT["/chat"]
 
-    START --> A["agent_node<br/>route_mode: LLM-first,<br/>heuristic fallback"];
-    A --> RA{"route_after_agent"};
-
-    RA -->|tool_calls present| TN["ToolNode<br/>(proxy tools)"];
-    RA -->|pending_clarification or no tool call| F["finalizer_node"];
-    RA -->|needs_hitl| H["hitl_node<br/>save pending action"];
-
-    TN --> TR["tool_result_node<br/>normalize execution_result"];
-    TR --> RT{"route_after_tool_result"};
-    RT -->|ok| F;
-    RT -->|conflict / needs_hitl| H;
-
-    F --> END(("END"));
-    H --> END;
-    END --> CRES["/chat ChatResponse<br/>summary + response_mode<br/>conversation_history (+event_id marker)<br/>may include hitl_action_id + alternatives"];
-
-    subgraph TOOLS["Tools Layer (called by ToolNode)"]
+    subgraph G["LangGraph booking_graph (/chat path)"]
       direction LR
-      T1["find_events"];
-      T2["check_availability"];
-      T3["book_event"];
-      T4["reschedule_event"];
-      T5["cancel_event"];
-      T6["schedule_mutual"];
+      S["Build AgentState<br/>messages + prefs + trace_id"] --> START(("START"))
+      START --> A["agent_node<br/>route_mode + mode-specific tools"]
+      A --> SAN["sanitize tool calls<br/>inject user_id/timezone<br/>hydrate [event_id,start_iso]<br/>rewrite location follow-up<br/>book_event -> update_event_location"]
+      SAN --> RA{"route_after_agent"}
+      RA -->|tool_calls| TN["ToolNode"]
+      RA -->|clarification / no tool| F["finalizer_node<br/>(single response surface)"]
+      RA -->|needs_hitl| H["hitl_node"]
+      TN --> TR["tool_result_node<br/>normalize execution_result"]
+      TR --> RT{"route_after_tool_result"}
+      RT -->|ok / error| F
+      RT -->|conflict| H
+      F --> END(("END"))
+      H --> END
     end
-    TN --> T1;
-    TN --> T2;
-    TN --> T3;
-    TN --> T4;
-    TN --> T5;
-    TN --> T6;
 
-    subgraph MEMORY["Memory / Persistence"]
-      direction LR
-      M1["Conversation history<br/>(client-passed each turn)"];
-      M2["PreferencesRepo (SQLite)"];
-      M3["PendingActionRepo (SQLite HITL)"];
+    CHAT --> S
+    END --> CRES["/chat ChatResponse<br/>status + summary + response_mode<br/>latest_event_id/latest_start_iso<br/>optional hitl_action_id + alternatives"]
+
+    CRES -->|if conflict options shown| UH["User selects option"] --> HITL["/hitl/respond"]
+    HITL --> RH["resolve_hitl_action<br/>(execution_result only)"] --> HF["finalizer_node"] --> HRES["/hitl/respond ChatResponse<br/>same finalizer contract"]
+
+    subgraph T["Calendar Tools (via ToolNode)"]
+      direction TB
+      Q["Query: find_events, check_availability, get_event_duration"]
+      ACT["Action: book_event, reschedule_event,<br/>cancel_event, update_event_duration,<br/>update_event_location, schedule_mutual"]
+      MCP["MCPClient<br/>/tools/call -> REST fallback"]
+      Q --> MCP
+      ACT --> MCP
     end
-    CHAT -.uses.-> M1;
-    CHAT -.reads.-> M2;
-    H -.writes.-> M3;
+    TN -.calls.-> Q
+    TN -.calls.-> ACT
 
-    CRES -->|if needs_hitl| UH["User selects HITL slot"];
-    UH --> HITL["/hitl/respond"];
-    HITL -.reads.-> M3;
-    HITL --> RH["resolve_hitl_action<br/>(build execution_result only)"];
-    RH --> HF["finalizer_node"];
-    HF --> HRES["/hitl/respond ChatResponse<br/>(finalizer-normalized payload)"];
+    subgraph P["Persistence / Context"]
+      direction TB
+      HIST["conversation_history<br/>(client-passed each turn)"]
+      PREF["PreferencesRepo (SQLite)"]
+      PEND["PendingActionRepo (SQLite)"]
+    end
+    CHAT -.uses.-> HIST
+    CHAT -.reads.-> PREF
+    H -.writes.-> PEND
+    HITL -.reads.-> PEND

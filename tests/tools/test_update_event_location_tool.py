@@ -1,7 +1,7 @@
 from app.tools import calendar_proxy
 
 
-def test_update_event_duration_keeps_start_and_changes_duration():
+def test_update_event_location_updates_existing_event():
     captured = {}
 
     class FakeClient:
@@ -11,52 +11,25 @@ def test_update_event_duration_keeps_start_and_changes_duration():
             return {"id": "evt_42"}
 
     calendar_proxy._client = lambda: FakeClient()
-    out = calendar_proxy.update_event_duration.invoke(
+    out = calendar_proxy.update_event_location.invoke(
         {
             "user_id": "u1",
             "timezone": "Asia/Kolkata",
             "event_id": "evt_42",
             "current_start_iso": "2026-03-28T20:00:00+05:30",
-            "duration_minutes": 45,
+            "location": "Pizza Bakery indiranagar",
         }
     )
 
     assert out["status"] == "updated"
     assert out["event_id"] == "evt_42"
-    assert out["duration_minutes"] == 45
+    assert out["location"] == "Pizza Bakery indiranagar"
     assert captured["tool_name"] == "mcp_google_calendar_update_event"
     assert captured["arguments"]["event_id"] == "evt_42"
-    assert captured["arguments"]["duration_minutes"] == 45
-    assert captured["arguments"]["start_iso"] == "2026-03-28T20:00:00+05:30"
+    assert captured["arguments"]["location"] == "Pizza Bakery indiranagar"
 
 
-def test_update_event_duration_invalid_start_returns_structured_error(monkeypatch):
-    class FakeClient:
-        def call_tool(self, tool_name: str, arguments: dict) -> dict:
-            raise AssertionError("Should not call MCP client on invalid start")
-
-    calendar_proxy._client = lambda: FakeClient()
-    monkeypatch.setattr(
-        calendar_proxy,
-        "_normalize_start_iso",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("bad start")),
-    )
-    out = calendar_proxy.update_event_duration.invoke(
-        {
-            "user_id": "u1",
-            "timezone": "Asia/Kolkata",
-            "event_id": "evt_42",
-            "current_start_iso": "not-a-date",
-            "duration_minutes": 45,
-        }
-    )
-
-    assert out["status"] == "error"
-    assert out["error_code"] == "invalid_datetime"
-    assert out["event_id"] == "evt_42"
-
-
-def test_update_event_duration_retries_with_resolved_event_id():
+def test_update_event_location_retries_with_resolved_event_id():
     class FakeClient:
         def __init__(self):
             self.calls = []
@@ -82,13 +55,13 @@ def test_update_event_duration_retries_with_resolved_event_id():
 
     fake = FakeClient()
     calendar_proxy._client = lambda: fake
-    out = calendar_proxy.update_event_duration.invoke(
+    out = calendar_proxy.update_event_location.invoke(
         {
             "user_id": "u1",
             "timezone": "Asia/Kolkata",
             "event_id": "dinner_date",
             "current_start_iso": "2026-03-28T20:00:00+05:30",
-            "duration_minutes": 60,
+            "location": "Pizza Bakery indiranagar",
         }
     )
 
@@ -99,25 +72,21 @@ def test_update_event_duration_retries_with_resolved_event_id():
     assert update_calls[1]["event_id"] == "evt_real_1"
 
 
-def test_update_event_duration_returns_event_not_found_when_resolution_fails():
+def test_update_event_location_returns_invalid_location_error():
     class FakeClient:
         def call_tool(self, tool_name: str, arguments: dict) -> dict:
-            if tool_name == "mcp_google_calendar_update_event":
-                raise RuntimeError("event not found")
-            if tool_name == "mcp_google_calendar_find_events":
-                return {"events": []}
-            raise AssertionError(f"unexpected tool call: {tool_name}")
+            raise AssertionError("Should not call MCP client on invalid location")
 
     calendar_proxy._client = lambda: FakeClient()
-    out = calendar_proxy.update_event_duration.invoke(
+    out = calendar_proxy.update_event_location.invoke(
         {
             "user_id": "u1",
             "timezone": "Asia/Kolkata",
-            "event_id": "dinner_date",
+            "event_id": "evt_42",
             "current_start_iso": "2026-03-28T20:00:00+05:30",
-            "duration_minutes": 60,
+            "location": "   ",
         }
     )
 
     assert out["status"] == "error"
-    assert out["error_code"] == "event_not_found"
+    assert out["error_code"] == "invalid_location"

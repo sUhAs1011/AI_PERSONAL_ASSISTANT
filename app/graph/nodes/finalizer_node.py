@@ -147,6 +147,11 @@ def _action_error_summary(result: dict, timezone: str) -> str:
         return f"{prefix} The requested time format looks invalid, so please share a clear date and time."
     if error_code == "invalid_attendees":
         return f"{prefix} One or more attendee email addresses look invalid."
+    if error_code in {"missing_event_context", "event_not_found"}:
+        return (
+            f"{prefix} I couldn't identify the exact event reference for this update, "
+            "so please confirm the event name and day."
+        )
     return prefix
 
 

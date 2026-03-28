@@ -148,6 +148,61 @@ def _event_start_end(event: dict, timezone: str) -> tuple[datetime | None, datet
     return start, end
 
 
+def _looks_like_title_hint(value: str) -> bool:
+    token = (value or "").strip()
+    if not token:
+        return False
+    if " " in token:
+        return True
+    if token.startswith("evt_"):
+        return False
+    if any(ch.isdigit() for ch in token):
+        return False
+    if "-" in token or "@" in token or "." in token:
+        return False
+    return True
+
+
+def _resolve_event_id_near_start(
+    user_id: str,
+    timezone: str,
+    title_hint: str,
+    start_iso: str,
+) -> tuple[str, str] | None:
+    try:
+        center = _parse_iso_datetime(start_iso)
+        if center is None:
+            return None
+        if center.tzinfo is None:
+            center = center.replace(tzinfo=ZoneInfo(timezone))
+        center = center.astimezone(ZoneInfo(timezone))
+        range_start = (center - timedelta(hours=12)).isoformat()
+        range_end = (center + timedelta(hours=12)).isoformat()
+        raw = _client().call_tool(
+            "mcp_google_calendar_find_events",
+            {"user_id": user_id, "start_iso": range_start, "end_iso": range_end},
+        )
+        events = raw.get("events", []) if isinstance(raw, dict) else []
+        title_query = title_hint.replace("_", " ")
+        matched = _pick_best_event(events=events, title_hint=title_query)
+        if not isinstance(matched, dict):
+            return None
+        resolved_id = matched.get("id")
+        if not isinstance(resolved_id, str) or not resolved_id.strip():
+            return None
+        matched_start, _matched_end = _event_start_end(matched, timezone)
+        resolved_start_iso = matched_start.isoformat() if matched_start else start_iso
+        return resolved_id, resolved_start_iso
+    except Exception:
+        logger.exception(
+            "tool.update_event_duration.resolve_id_failed user_id=%s title_hint=%r start_iso=%s",
+            user_id,
+            title_hint,
+            start_iso,
+        )
+        return None
+
+
 @tool
 def check_availability(
     user_id: str, date_range: str, timezone: str, attendees: list[str] | None = None
@@ -438,6 +493,54 @@ def update_event_duration(
         }
     except Exception as exc:
         logger.exception("tool.update_event_duration.error user_id=%s event_id=%s", user_id, event_id)
+        if _looks_like_title_hint(event_id):
+            resolved = _resolve_event_id_near_start(
+                user_id=user_id,
+                timezone=timezone,
+                title_hint=event_id,
+                start_iso=start_iso,
+            )
+            if resolved is not None:
+                resolved_id, resolved_start_iso = resolved
+                try:
+                    logger.info(
+                        "tool.update_event_duration.retry_with_resolved_id user_id=%s old_event_id=%s new_event_id=%s",
+                        user_id,
+                        event_id,
+                        resolved_id,
+                    )
+                    raw = _client().call_tool(
+                        "mcp_google_calendar_update_event",
+                        {
+                            "user_id": user_id,
+                            "event_id": resolved_id,
+                            "start_iso": resolved_start_iso,
+                            "duration_minutes": duration_minutes,
+                        },
+                    )
+                    out_event_id = raw.get("id") if isinstance(raw, dict) else None
+                    return {
+                        "status": "updated",
+                        "event": {"id": out_event_id or resolved_id},
+                        "event_id": out_event_id or resolved_id,
+                        "start_iso": resolved_start_iso,
+                        "duration_minutes": duration_minutes,
+                        "raw": raw,
+                    }
+                except Exception:
+                    logger.exception(
+                        "tool.update_event_duration.retry_failed user_id=%s resolved_event_id=%s",
+                        user_id,
+                        resolved_id,
+                    )
+            return {
+                "status": "error",
+                "error_code": "event_not_found",
+                "error": "Could not resolve a concrete event id for duration update.",
+                "event_id": event_id,
+                "start_iso": start_iso,
+                "duration_minutes": duration_minutes,
+            }
         return {
             "status": "error",
             "error_code": "calendar_api_error",
@@ -445,6 +548,126 @@ def update_event_duration(
             "event_id": event_id,
             "start_iso": start_iso,
             "duration_minutes": duration_minutes,
+        }
+
+
+@tool
+def update_event_location(
+    user_id: str,
+    timezone: str,
+    event_id: str,
+    current_start_iso: str,
+    location: str,
+) -> dict:
+    """Update only event location while keeping the same event identity and time context."""
+    normalized_location = (location or "").strip()
+    if not normalized_location:
+        return {
+            "status": "error",
+            "error_code": "invalid_location",
+            "error": "Location text is required for location update.",
+            "event_id": event_id,
+            "start_iso": current_start_iso,
+        }
+
+    try:
+        start_iso = _normalize_start_iso(current_start_iso, timezone)
+    except Exception:
+        logger.exception(
+            "tool.update_event_location.invalid_datetime user_id=%s event_id=%s current_start_iso=%r",
+            user_id,
+            event_id,
+            current_start_iso,
+        )
+        return {
+            "status": "error",
+            "error_code": "invalid_datetime",
+            "error": "Could not parse current_start_iso for location update.",
+            "event_id": event_id,
+            "start_iso": current_start_iso,
+            "location": normalized_location,
+        }
+
+    try:
+        logger.info(
+            "tool.update_event_location.start user_id=%s event_id=%s location=%r",
+            user_id,
+            event_id,
+            normalized_location,
+        )
+        raw = _client().call_tool(
+            "mcp_google_calendar_update_event",
+            {
+                "user_id": user_id,
+                "event_id": event_id,
+                "location": normalized_location,
+            },
+        )
+        out_event_id = raw.get("id") if isinstance(raw, dict) else None
+        return {
+            "status": "updated",
+            "event": {"id": out_event_id or event_id},
+            "event_id": out_event_id or event_id,
+            "start_iso": start_iso,
+            "location": normalized_location,
+            "raw": raw,
+        }
+    except Exception as exc:
+        logger.exception("tool.update_event_location.error user_id=%s event_id=%s", user_id, event_id)
+        if _looks_like_title_hint(event_id):
+            resolved = _resolve_event_id_near_start(
+                user_id=user_id,
+                timezone=timezone,
+                title_hint=event_id,
+                start_iso=start_iso,
+            )
+            if resolved is not None:
+                resolved_id, resolved_start_iso = resolved
+                try:
+                    logger.info(
+                        "tool.update_event_location.retry_with_resolved_id user_id=%s old_event_id=%s new_event_id=%s",
+                        user_id,
+                        event_id,
+                        resolved_id,
+                    )
+                    raw = _client().call_tool(
+                        "mcp_google_calendar_update_event",
+                        {
+                            "user_id": user_id,
+                            "event_id": resolved_id,
+                            "location": normalized_location,
+                        },
+                    )
+                    out_event_id = raw.get("id") if isinstance(raw, dict) else None
+                    return {
+                        "status": "updated",
+                        "event": {"id": out_event_id or resolved_id},
+                        "event_id": out_event_id or resolved_id,
+                        "start_iso": resolved_start_iso,
+                        "location": normalized_location,
+                        "raw": raw,
+                    }
+                except Exception:
+                    logger.exception(
+                        "tool.update_event_location.retry_failed user_id=%s resolved_event_id=%s",
+                        user_id,
+                        resolved_id,
+                    )
+            return {
+                "status": "error",
+                "error_code": "event_not_found",
+                "error": "Could not resolve a concrete event id for location update.",
+                "event_id": event_id,
+                "start_iso": start_iso,
+                "location": normalized_location,
+            }
+        return {
+            "status": "error",
+            "error_code": "calendar_api_error",
+            "error": str(exc),
+            "event_id": event_id,
+            "start_iso": start_iso,
+            "location": normalized_location,
         }
 
 

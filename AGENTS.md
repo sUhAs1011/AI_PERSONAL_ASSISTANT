@@ -229,3 +229,37 @@ npm run build
 - updated `tests/api/test_chat_endpoint.py` (history marker includes `start_iso`),
 - updated `tests/e2e/test_pa_conversation_acceptance.py` (follow-up state contains `start_iso` marker),
 - updated `tests/graph/test_tool_result_node.py` and `tests/graph/test_agent_tool_use_failure.py`.
+
+## Recent Hallucinated Event-ID Guardrails
+- `app/graph/nodes/agent_node.py` now sanitizes tool-call arguments before `ToolNode` execution:
+- forces authoritative `user_id` and `timezone` from graph state (does not trust LLM for these),
+- extracts latest history marker `[event_id=... start_iso=...]`,
+- hydrates `update_event_duration` arguments from marker context,
+- blocks suspicious title-like `event_id` calls when marker context is missing, returning a targeted clarification.
+- Added tool-use failure diagnostics in logs (`failed_generation` capture remains + sanitized-call logs).
+- `app/tools/calendar_proxy.py` `update_event_duration` now has retry resolution:
+- if first update fails and `event_id` looks title-like, it searches nearby events and retries with resolved real ID.
+- if resolution fails, returns `error_code=event_not_found` (instead of opaque generic failure).
+- `app/graph/nodes/finalizer_node.py` now maps `event_not_found` / `missing_event_context` to specific user guidance.
+- Added regression tests:
+- `tests/graph/test_agent_tool_use_failure.py` (sanitization + missing-marker clarification),
+- `tests/tools/test_update_event_duration_tool.py` (retry with resolved ID + not-found path),
+- `tests/graph/test_finalizer_modes.py` (specific event-not-found summary).
+
+## Recent Location Follow-up Update Fix
+- Added new action proxy tool `update_event_location` in `app/tools/calendar_proxy.py`:
+  - updates only `location` on an existing event,
+  - requires `event_id` + `current_start_iso` context,
+  - includes title-hint fallback resolution (same pattern as `update_event_duration`) and structured error payloads.
+- `app/graph/nodes/agent_node.py` now includes `update_event_location` in action tools and sanitization:
+  - hydrates marker context (`[event_id=... start_iso=...]`) into location-update calls,
+  - rewrites mistaken follow-up `book_event` tool calls into `update_event_location` for location-only edits,
+  - keeps clarification path when required location/context is missing.
+- `app/services/calendar/mcp_client.py` update-event fallback now supports partial patch updates (e.g., `location`) and preserves existing start/duration patch behavior.
+- `app/graph/nodes/tool_result_node.py` now normalizes `update_event_location` as a calendar action result.
+- `app/llm/prompts.py` now explicitly instructs location follow-up edits to use `update_event_location` and avoid new bookings.
+- Added regression tests:
+  - `tests/tools/test_update_event_location_tool.py`,
+  - `tests/graph/test_agent_tool_use_failure.py` (rewrite guard for location follow-ups),
+  - `tests/graph/test_tool_result_node.py` (location-update action normalization),
+  - `tests/services/test_mcp_client_compat.py` (location-only update fallback patch).
