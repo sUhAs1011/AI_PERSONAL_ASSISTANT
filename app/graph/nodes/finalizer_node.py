@@ -51,7 +51,7 @@ def finalizer_node(state: dict) -> dict:
         logger.info("finalizer.general_chat_default trace_id=%s", trace_id)
         return _finalize(state=state, summary="I'm here and ready to help with your day.")
 
-    summary = _action_summary_with_fallback(response_mode=response_mode, result=result, trace_id=trace_id)
+    summary = _action_summary_with_fallback(response_mode=response_mode, result=result, trace_id=trace_id, timezone=state.get("timezone", "Asia/Kolkata"))
     return _finalize(state=state, summary=summary)
 
 
@@ -95,13 +95,13 @@ def _build_final_response(
     return out
 
 
-def _action_summary_with_fallback(response_mode: str, result: dict, trace_id: str) -> str:
+def _action_summary_with_fallback(response_mode: str, result: dict, trace_id: str, timezone: str) -> str:
     try:
         llm = build_llm(bound_tools=[])
         msg = llm.invoke(
             [
                 {"role": "system", "content": render_finalizer_system_prompt(response_mode)},
-                {"role": "user", "content": f"Execution result: {result}"},
+                {"role": "user", "content": f"User Timezone: {timezone}\n\nExecution result: {result}\n\nImportant: Use the User Timezone provided above when mentioning event times."},
             ]
         )
         summary = getattr(msg, "content", str(msg)).strip()

@@ -264,13 +264,9 @@ const DashboardPage = () => {
 }
 
 // --- CHAT PAGE ---
-const ChatPage = () => {
+const ChatPage = ({ messages, setMessages, conversationHistory, setConversationHistory }) => {
   const userId = 'u1'
   const [inputText, setInputText] = useState('')
-  const [messages, setMessages] = useState([
-    { type: 'ai', content: 'I can help you book, reschedule, or check availability. Try: "Book a design review tomorrow at 3 PM with alex@example.com".' }
-  ])
-  const [conversationHistory, setConversationHistory] = useState([])
   const [isSending, setIsSending] = useState(false)
   const [isListening, setIsListening] = useState(false)
   const recognitionRef = useRef(null)
@@ -567,14 +563,14 @@ const PreferencesPage = () => {
       <AnimatePresence>
         {isModalOpen && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
-            <motion.div 
+            <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setIsModalOpen(false)}
               className="absolute inset-0 bg-slate-900/60 backdrop-blur-md"
             />
-            <motion.div 
+            <motion.div
               initial={{ scale: 0.9, opacity: 0, y: 20 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.9, opacity: 0, y: 20 }}
@@ -582,7 +578,7 @@ const PreferencesPage = () => {
             >
               <div className="flex justify-between items-center mb-8">
                 <h3 className="text-2xl font-black text-slate-900 tracking-tight">Add New Range</h3>
-                <button 
+                <button
                   onClick={() => setIsModalOpen(false)}
                   className="w-10 h-10 rounded-full bg-slate-50 flex items-center justify-center text-slate-400 hover:text-slate-600 transition-colors"
                 >
@@ -593,26 +589,26 @@ const PreferencesPage = () => {
               <div className="space-y-6">
                 <div>
                   <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest mb-3 block">Range Name</label>
-                  <input 
-                    type="text" 
+                  <input
+                    type="text"
                     placeholder="e.g. Afternoon Focus"
                     value={newRange.label}
-                    onChange={(e) => setNewRange({...newRange, label: e.target.value})}
+                    onChange={(e) => setNewRange({ ...newRange, label: e.target.value })}
                     className="w-full bg-slate-50 border-2 border-slate-50 rounded-[20px] px-6 py-4 font-bold text-slate-900 outline-none focus:border-brand/20 transition-all"
                   />
                 </div>
                 <div>
                   <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest mb-3 block">Time Window</label>
-                  <input 
-                    type="text" 
+                  <input
+                    type="text"
                     placeholder="e.g. 02:00 PM - 04:00 PM"
                     value={newRange.time}
-                    onChange={(e) => setNewRange({...newRange, time: e.target.value})}
+                    onChange={(e) => setNewRange({ ...newRange, time: e.target.value })}
                     className="w-full bg-slate-50 border-2 border-slate-50 rounded-[20px] px-6 py-4 font-bold text-slate-900 outline-none focus:border-brand/20 transition-all"
                   />
                 </div>
-                
-                <button 
+
+                <button
                   onClick={handleAddRange}
                   className="w-full bg-brand text-white font-black py-5 rounded-[24px] text-[15px] shadow-2xl shadow-brand/30 mt-4 hover:scale-[1.02] active:scale-[0.98] transition-all"
                 >
@@ -769,7 +765,7 @@ const PreferencesPage = () => {
                     <p className="text-[11px] font-black text-slate-400 mt-1 uppercase tracking-widest">{item.time}</p>
                   </div>
                   <div className="flex items-center gap-3">
-                    <button 
+                    <button
                       onClick={() => deleteRange(i)}
                       className="w-10 h-10 rounded-xl flex items-center justify-center text-slate-300 hover:text-red-500 hover:bg-red-50 transition-all"
                     >
@@ -781,7 +777,7 @@ const PreferencesPage = () => {
               ))}
             </div>
 
-            <button 
+            <button
               onClick={() => setIsModalOpen(true)}
               className="w-full mt-8 py-5 flex items-center justify-center gap-3 text-brand font-bold text-[11px] uppercase tracking-[0.2em] border-2 border-dashed border-brand/20 rounded-[28px] hover:bg-brand/5 hover:border-brand/40 transition-all"
             >
@@ -813,6 +809,10 @@ const PreferencesPage = () => {
 // --- MAIN APP COMPONENT ---
 function App() {
   const [activeTab, setActiveTab] = useState('calendar')
+  const [chatMessages, setChatMessages] = useState([
+    { type: 'ai', content: 'I can help you book, reschedule, or check availability. Try: "Book a design review tomorrow at 3 PM with alex@example.com".' }
+  ])
+  const [chatHistory, setChatHistory] = useState([])
 
   return (
     <div className="flex min-h-screen bg-[#F7F8FC] transition-colors duration-500 font-sans">
@@ -902,7 +902,7 @@ function App() {
           >
             {activeTab === 'calendar' && <DashboardPage />}
             {activeTab === 'settings' && <PreferencesPage />}
-            {activeTab === 'chat' && <ChatPage />}
+            {activeTab === 'chat' && <ChatPage messages={chatMessages} setMessages={setChatMessages} conversationHistory={chatHistory} setConversationHistory={setChatHistory} />}
           </motion.div>
         </AnimatePresence>
       </main>
