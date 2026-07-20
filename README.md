@@ -175,11 +175,3 @@ This project was developed during the **Praxis Hackathon**, where it was recogni
 <p align="center">
   <img src="https://github.com/user-attachments/assets/5d514d6f-96c5-4267-9e73-56a0b7095af5" alt="Praxis Hackathon Certificate"/>
 </p>
-
----
-
-# ⭐ Acknowledgements
-
-This project demonstrates how **LangGraph**, **Large Language Models**, and **tool-calling agents** can be orchestrated to build intelligent, context-aware scheduling assistants capable of handling real-world booking workflows.
-
-If you found this project useful or interesting, consider giving the repository a ⭐ on GitHub!
